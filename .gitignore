@@ -1,0 +1,15 @@
+.DS_Store
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+node_modules/
+frontend/dist/
+data/*.sqlite3
+data/*.sqlite3-*
+storage/audio/*
+!storage/audio/.gitkeep
+storage/backups/*
+!storage/backups/.gitkeep
+

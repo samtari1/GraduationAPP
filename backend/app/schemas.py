@@ -1,0 +1,125 @@
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
+
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class AudioOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    filename: str
+    original_filename: str
+    source: str
+    voice: Optional[str] = None
+    approved: bool
+    created_at: datetime
+    url: str = ""
+
+
+class StudentBase(BaseModel):
+    student_id: str = Field(min_length=1, max_length=80)
+    display_name: str = Field(min_length=1, max_length=255)
+    native_name: Optional[str] = None
+    language: Optional[str] = None
+    phonetic_spelling: Optional[str] = None
+    program: str = ""
+    announcement_text: str = ""
+    pronunciation_status: str = "pending"
+    notes: Optional[str] = None
+
+
+class StudentCreate(StudentBase):
+    pass
+
+
+class StudentUpdate(BaseModel):
+    display_name: Optional[str] = None
+    native_name: Optional[str] = None
+    language: Optional[str] = None
+    phonetic_spelling: Optional[str] = None
+    program: Optional[str] = None
+    announcement_text: Optional[str] = None
+    pronunciation_status: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class StudentOut(StudentBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    qr_token: str
+    active_audio_id: Optional[int] = None
+    active_audio: Optional[AudioOut] = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class CeremonyCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=255)
+    event_date: str
+    location: str = ""
+
+
+class CeremonyOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    name: str
+    event_date: str
+    location: str
+    status: str
+    created_at: datetime
+    student_count: int = 0
+
+
+class EntryStudent(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    student_id: str
+    display_name: str
+    native_name: Optional[str]
+    phonetic_spelling: Optional[str]
+    program: str
+    announcement_text: str
+    pronunciation_status: str
+    active_audio_id: Optional[int]
+    active_audio: Optional[AudioOut] = None
+
+
+class EntryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    ceremony_id: int
+    position: int
+    status: str
+    checked_in_at: Optional[datetime]
+    announced_at: Optional[datetime]
+    play_count: int
+    student: EntryStudent
+
+
+class CeremonyDetail(CeremonyOut):
+    entries: list[EntryOut]
+
+
+class AssignStudent(BaseModel):
+    student_id: int
+
+
+class ScanRequest(BaseModel):
+    token: str
+
+
+class EntryAction(BaseModel):
+    action: str
+
+
+class AuditOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: int
+    event_type: str
+    message: str
+    entity_type: Optional[str]
+    entity_id: Optional[int]
+    created_at: datetime
+

@@ -1,0 +1,246 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { api } from './api'
+import type { AuditEvent, Ceremony, CeremonyDetail, DashboardStats, Entry, Student } from './types'
+
+type View = 'dashboard' | 'students' | 'ceremonies' | 'control'
+
+const navItems: { id: View; label: string; glyph: string }[] = [
+  { id: 'dashboard', label: 'Overview', glyph: '▦' },
+  { id: 'students', label: 'Students', glyph: '◎' },
+  { id: 'ceremonies', label: 'Ceremonies', glyph: '◇' },
+  { id: 'control', label: 'Stage control', glyph: '▶' },
+]
+
+const statusLabel = (value: string) => value.replaceAll('_', ' ')
+
+function App() {
+  const [view, setView] = useState<View>('dashboard')
+  const [students, setStudents] = useState<Student[]>([])
+  const [ceremonies, setCeremonies] = useState<Ceremony[]>([])
+  const [selectedCeremonyId, setSelectedCeremonyId] = useState<number | null>(null)
+  const [notice, setNotice] = useState<string>('')
+
+  const loadCore = async () => {
+    const [studentData, ceremonyData] = await Promise.all([
+      api.get<Student[]>('/api/students'),
+      api.get<Ceremony[]>('/api/ceremonies'),
+    ])
+    setStudents(studentData)
+    setCeremonies(ceremonyData)
+    setSelectedCeremonyId((current) => current ?? ceremonyData[0]?.id ?? null)
+  }
+
+  useEffect(() => {
+    loadCore().catch((error) => setNotice(error.message))
+  }, [])
+
+  const navigate = (target: View) => {
+    setView(target)
+    setNotice('')
+  }
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <div className="brand-mark">G</div>
+          <div>
+            <strong>GradVoice</strong>
+            <span>Ceremony studio</span>
+          </div>
+        </div>
+        <nav aria-label="Main navigation">
+          {navItems.map((item) => (
+            <button className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate(item.id)} key={item.id}>
+              <span>{item.glyph}</span>{item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="offline-card">
+          <span className="live-dot" />
+          <div><strong>Offline ready</strong><small>Local database connected</small></div>
+        </div>
+      </aside>
+      <main>
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Sandhills Community College</p>
+            <h1>{navItems.find((item) => item.id === view)?.label}</h1>
+          </div>
+          <div className="top-actions">
+            <select
+              aria-label="Active ceremony"
+              value={selectedCeremonyId ?? ''}
+              onChange={(event) => setSelectedCeremonyId(Number(event.target.value))}
+            >
+              <option value="">Select a ceremony</option>
+              {ceremonies.map((ceremony) => <option value={ceremony.id} key={ceremony.id}>{ceremony.name}</option>)}
+            </select>
+            <button className="avatar" title="Local administrator">AD</button>
+          </div>
+        </header>
+        {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
+        <div className="page">
+          {view === 'dashboard' && <Dashboard onNavigate={navigate} selectedCeremonyId={selectedCeremonyId} />}
+          {view === 'students' && <Students students={students} reload={loadCore} setNotice={setNotice} />}
+          {view === 'ceremonies' && <Ceremonies ceremonies={ceremonies} students={students} reload={loadCore} setSelected={setSelectedCeremonyId} setNotice={setNotice} />}
+          {view === 'control' && <StageControl ceremonyId={selectedCeremonyId} setNotice={setNotice} />}
+        </div>
+      </main>
+    </div>
+  )
+}
+
+function Dashboard({ onNavigate, selectedCeremonyId }: { onNavigate: (view: View) => void; selectedCeremonyId: number | null }) {
+  const [stats, setStats] = useState<DashboardStats | null>(null)
+  const [audit, setAudit] = useState<AuditEvent[]>([])
+  const [readiness, setReadiness] = useState<{ ready: boolean; total: number; issue_count: number } | null>(null)
+
+  useEffect(() => {
+    api.get<DashboardStats>('/api/dashboard').then(setStats)
+    api.get<AuditEvent[]>('/api/audit?limit=6').then(setAudit)
+    if (selectedCeremonyId) api.get(`/api/ceremonies/${selectedCeremonyId}/readiness`).then((value) => setReadiness(value as typeof readiness))
+  }, [selectedCeremonyId])
+
+  return <>
+    <section className="hero">
+      <div>
+        <p className="eyebrow light">CEREMONY COMMAND CENTER</p>
+        <h2>Every name, spoken with care.</h2>
+        <p>Prepare pronunciations, organize the procession, and run graduation confidently—even without internet.</p>
+      </div>
+      <button className="primary light-button" onClick={() => onNavigate('control')}>Open stage control <span>→</span></button>
+    </section>
+    <section className="stats-grid">
+      <Stat label="Graduating students" value={stats?.students ?? '—'} detail={`${stats?.with_audio ?? 0} have approved audio`} />
+      <Stat label="Pronunciations approved" value={stats?.approved ?? '—'} detail={`${stats?.needs_attention ?? 0} need attention`} tone="gold" />
+      <Stat label="Active ceremonies" value={stats?.ceremonies ?? '—'} detail="Local ceremony database" />
+      <Stat label="Ceremony readiness" value={readiness?.ready ? 'Ready' : readiness ? `${readiness.issue_count} issues` : '—'} detail={readiness ? `${readiness.total} assigned students` : 'Select a ceremony'} tone={readiness?.ready ? 'green' : 'red'} />
+    </section>
+    <div className="two-column">
+      <section className="panel">
+        <div className="panel-heading"><div><p className="eyebrow">WORKFLOW</p><h3>Preparation checklist</h3></div></div>
+        <div className="checklist">
+          <button onClick={() => onNavigate('students')}><span>01</span><div><strong>Import the graduating class</strong><small>Upload CSV data and review validation results</small></div><b>→</b></button>
+          <button onClick={() => onNavigate('students')}><span>02</span><div><strong>Review every pronunciation</strong><small>Compare native spelling, phonetics, and audio</small></div><b>→</b></button>
+          <button onClick={() => onNavigate('ceremonies')}><span>03</span><div><strong>Build the ceremony order</strong><small>Assign students and check readiness</small></div><b>→</b></button>
+          <button onClick={() => onNavigate('control')}><span>04</span><div><strong>Rehearse stage controls</strong><small>Test scanning, queueing, and speaker output</small></div><b>→</b></button>
+        </div>
+      </section>
+      <section className="panel">
+        <div className="panel-heading"><div><p className="eyebrow">AUDIT TRAIL</p><h3>Recent activity</h3></div></div>
+        <div className="activity-list">
+          {audit.length === 0 && <p className="empty">Activity will appear here.</p>}
+          {audit.map((event) => <div className="activity" key={event.id}><span className="activity-icon">✓</span><div><strong>{event.message}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div></div>)}
+        </div>
+      </section>
+    </div>
+  </>
+}
+
+function Stat({ label, value, detail, tone = '' }: { label: string; value: string | number; detail: string; tone?: string }) {
+  return <article className={`stat-card ${tone}`}><p>{label}</p><strong>{value}</strong><small>{detail}</small></article>
+}
+
+function Students({ students, reload, setNotice }: { students: Student[]; reload: () => Promise<void>; setNotice: (value: string) => void }) {
+  const [search, setSearch] = useState('')
+  const [editing, setEditing] = useState<Student | null>(null)
+  const [showAdd, setShowAdd] = useState(false)
+  const importRef = useRef<HTMLInputElement>(null)
+  const filtered = useMemo(() => students.filter((student) => `${student.display_name} ${student.student_id} ${student.program}`.toLowerCase().includes(search.toLowerCase())), [students, search])
+
+  const importCsv = async (file?: File) => {
+    if (!file) return
+    const form = new FormData(); form.append('file', file)
+    try {
+      const result = await api.post<{ created: number; updated: number; skipped: number }>('/api/students/import', form)
+      setNotice(`Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.`)
+      await reload()
+    } catch (error) { setNotice((error as Error).message) }
+    if (importRef.current) importRef.current.value = ''
+  }
+
+  return <>
+    <div className="page-heading"><div><p className="eyebrow">GRADUATING CLASS</p><h2>Student pronunciation records</h2><p>Manage ceremony names, language guidance, and approved audio.</p></div><div className="heading-actions"><input ref={importRef} type="file" accept=".csv" hidden onChange={(e) => importCsv(e.target.files?.[0])} /><button className="secondary" onClick={() => importRef.current?.click()}>Import CSV</button><button className="primary" onClick={() => setShowAdd(true)}>+ Add student</button></div></div>
+    <section className="panel table-panel">
+      <div className="table-tools"><label className="search"><span>⌕</span><input placeholder="Search by name, ID, or program" value={search} onChange={(e) => setSearch(e.target.value)} /></label><span>{filtered.length} students</span></div>
+      <div className="table-wrap"><table><thead><tr><th>Student</th><th>Program</th><th>Pronunciation</th><th>Audio</th><th></th></tr></thead><tbody>
+        {filtered.map((student) => <tr key={student.id}><td><div className="student-cell"><span className="initials">{student.display_name.split(' ').slice(0,2).map((part) => part[0]).join('')}</span><div><strong>{student.display_name}</strong>{student.native_name && <small dir="auto">{student.native_name}</small>}<small>ID {student.student_id}</small></div></div></td><td>{student.program || <span className="muted">Not set</span>}</td><td><span className={`badge ${student.pronunciation_status}`}>{statusLabel(student.pronunciation_status)}</span>{student.phonetic_spelling && <small className="block">{student.phonetic_spelling}</small>}</td><td>{student.active_audio ? <button className="play-mini" onClick={() => new Audio(student.active_audio!.url).play()}>▶ Play</button> : <span className="muted">Missing</span>}</td><td><button className="text-button" onClick={() => setEditing(student)}>Review</button></td></tr>)}
+      </tbody></table></div>
+    </section>
+    {(editing || showAdd) && <StudentModal student={editing} close={() => { setEditing(null); setShowAdd(false) }} reload={reload} setNotice={setNotice} />}
+  </>
+}
+
+function StudentModal({ student, close, reload, setNotice }: { student: Student | null; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
+  const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', language: student?.language ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status ?? 'pending', notes: student?.notes ?? '' })
+  const [audioFile, setAudioFile] = useState<File | null>(null)
+  const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault()
+    try {
+      const saved = student ? await api.patch<Student>(`/api/students/${student.id}`, form) : await api.post<Student>('/api/students', form)
+      if (audioFile) {
+        const data = new FormData(); data.append('file', audioFile); data.append('source', 'upload'); data.append('approve', 'true')
+        await api.post(`/api/students/${saved.id}/audio`, data)
+      }
+      await reload(); setNotice(`${form.display_name} saved.`); close()
+    } catch (error) { setNotice((error as Error).message) }
+  }
+  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}><form className="modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">PRONUNCIATION RECORD</p><h2>{student ? 'Review student' : 'Add student'}</h2></div><button type="button" className="close" onClick={close}>×</button></div><div className="form-grid">
+    <label>Student ID<input required disabled={!!student} value={form.student_id} onChange={(e) => update('student_id', e.target.value)} /></label>
+    <label>Display name<input required value={form.display_name} onChange={(e) => update('display_name', e.target.value)} /></label>
+    <label>Native-language name<input dir="auto" value={form.native_name} onChange={(e) => update('native_name', e.target.value)} /></label>
+    <label>Language or regional variety<input value={form.language} placeholder="e.g. Vietnamese" onChange={(e) => update('language', e.target.value)} /></label>
+    <label className="wide">Phonetic guide<input value={form.phonetic_spelling} placeholder="e.g. ngwin meen ahn" onChange={(e) => update('phonetic_spelling', e.target.value)} /></label>
+    <label>Program<input value={form.program} onChange={(e) => update('program', e.target.value)} /></label>
+    <label>Status<select value={form.pronunciation_status} onChange={(e) => update('pronunciation_status', e.target.value)}><option value="pending">Pending</option><option value="needs_review">Needs review</option><option value="approved">Approved</option></select></label>
+    <label className="wide">Exact ceremony announcement<input value={form.announcement_text} placeholder={form.display_name || 'Name to announce'} onChange={(e) => update('announcement_text', e.target.value)} /></label>
+    <label className="wide upload-zone">Approved pronunciation audio<input type="file" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} /><span>{audioFile?.name ?? (student?.active_audio ? `Current: ${student.active_audio.original_filename}` : 'Choose an MP3, WAV, M4A, OGG, or WebM file')}</span></label>
+    <label className="wide">Reviewer notes<textarea rows={3} value={form.notes} onChange={(e) => update('notes', e.target.value)} /></label>
+  </div><div className="modal-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary">Save record</button></div></form></div>
+}
+
+function Ceremonies({ ceremonies, students, reload, setSelected, setNotice }: { ceremonies: Ceremony[]; students: Student[]; reload: () => Promise<void>; setSelected: (id: number) => void; setNotice: (value: string) => void }) {
+  const [detail, setDetail] = useState<CeremonyDetail | null>(null)
+  const [showCreate, setShowCreate] = useState(false)
+  const [form, setForm] = useState({ name: '', event_date: '', location: '' })
+  const loadDetail = (id: number) => api.get<CeremonyDetail>(`/api/ceremonies/${id}`).then(setDetail).catch((e) => setNotice(e.message))
+  const create = async (event: React.FormEvent) => { event.preventDefault(); try { const ceremony = await api.post<Ceremony>('/api/ceremonies', form); await reload(); setSelected(ceremony.id); setShowCreate(false); loadDetail(ceremony.id) } catch (e) { setNotice((e as Error).message) } }
+  const assign = async (studentId: number) => { if (!detail || !studentId) return; try { const updated = await api.post<CeremonyDetail>(`/api/ceremonies/${detail.id}/students`, { student_id: studentId }); setDetail(updated); await reload() } catch (e) { setNotice((e as Error).message) } }
+  const unassigned = students.filter((student) => !detail?.entries.some((entry) => entry.student.id === student.id))
+  return <>
+    <div className="page-heading"><div><p className="eyebrow">EVENT PLANNING</p><h2>Ceremonies</h2><p>Organize graduates and confirm every announcement is ready.</p></div><button className="primary" onClick={() => setShowCreate(true)}>+ New ceremony</button></div>
+    <div className="ceremony-grid">
+      <section className="ceremony-list">{ceremonies.map((ceremony) => <button key={ceremony.id} className={detail?.id === ceremony.id ? 'ceremony-card selected' : 'ceremony-card'} onClick={() => { loadDetail(ceremony.id); setSelected(ceremony.id) }}><span className="date-tile"><b>{new Date(`${ceremony.event_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</b><strong>{new Date(`${ceremony.event_date}T12:00:00`).getDate()}</strong></span><div><strong>{ceremony.name}</strong><small>{ceremony.location || 'Location not set'}</small><small>{ceremony.student_count} students</small></div><span>→</span></button>)}</section>
+      <section className="panel ceremony-detail">{detail ? <><div className="panel-heading"><div><p className="eyebrow">CEREMONY ROSTER</p><h3>{detail.name}</h3></div><select defaultValue="" onChange={(e) => { assign(Number(e.target.value)); e.target.value = '' }}><option value="">+ Assign student</option>{unassigned.map((student) => <option value={student.id} key={student.id}>{student.display_name}</option>)}</select></div><div className="roster">{detail.entries.map((entry) => <div className="roster-row" key={entry.id}><span>{entry.position}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-mark' : 'missing-mark'}>{entry.student.active_audio ? '✓ Audio ready' : '! Audio missing'}</span></div>)}{detail.entries.length === 0 && <p className="empty">Assign students to build the processional order.</p>}</div></> : <div className="empty-state"><span>◇</span><h3>Select a ceremony</h3><p>Choose an event to review its roster.</p></div>}</section>
+    </div>
+    {showCreate && <div className="modal-backdrop"><form className="modal small-modal" onSubmit={create}><div className="modal-heading"><h2>New ceremony</h2><button type="button" className="close" onClick={() => setShowCreate(false)}>×</button></div><div className="form-grid single"><label>Ceremony name<input required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} /></label><label>Date<input required type="date" value={form.event_date} onChange={(e) => setForm({...form, event_date: e.target.value})} /></label><label>Location<input value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} /></label></div><div className="modal-actions"><button type="button" className="secondary" onClick={() => setShowCreate(false)}>Cancel</button><button className="primary">Create ceremony</button></div></form></div>}
+  </>
+}
+
+function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; setNotice: (value: string) => void }) {
+  const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null)
+  const [scan, setScan] = useState('')
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+  const load = () => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(setCeremony).catch((e) => setNotice(e.message)) : Promise.resolve()
+  useEffect(() => { load() }, [ceremonyId])
+  const activeQueue = ceremony?.entries.filter((entry) => ['checked_in', 'queued'].includes(entry.status)).sort((a,b) => a.position - b.position) ?? []
+  const current = activeQueue[0]
+  const scanned = async (event: React.FormEvent) => { event.preventDefault(); if (!ceremonyId || !scan.trim()) return; try { await api.post(`/api/ceremonies/${ceremonyId}/scan`, { token: scan }); setScan(''); await load() } catch (e) { setNotice((e as Error).message) } }
+  const action = async (entry: Entry, value: string) => { try { if (['announce', 'replay'].includes(value) && entry.student.active_audio) { audioRef.current?.pause(); audioRef.current = new Audio(entry.student.active_audio.url); await audioRef.current.play() } await api.post(`/api/entries/${entry.id}/action`, { action: value }); await load() } catch (e) { setNotice((e as Error).message) } }
+  if (!ceremonyId) return <div className="empty-state tall"><span>▶</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
+  return <>
+    <div className="stage-heading"><div><p className="eyebrow">LIVE CEREMONY MODE</p><h2>{ceremony?.name ?? 'Loading…'}</h2></div><div className="stage-status"><span className="live-dot" />Local and ready</div></div>
+    <form className="scan-bar" onSubmit={scanned}><label><span>SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan QR code, swipe card, or enter student ID" /></label><button className="primary">Check in</button></form>
+    <div className="stage-grid">
+      <section className="now-card">
+        <p className="eyebrow light">NOW AT THE STAGE</p>
+        {current ? <><span className="queue-number">#{current.position}</span><h3>{current.student.announcement_text || current.student.display_name}</h3>{current.student.native_name && <p className="native" dir="auto">{current.student.native_name}</p>}<p className="program">{current.student.program}</p><div className="phonetic"><small>PRONUNCIATION GUIDE</small><strong>{current.student.phonetic_spelling || 'No phonetic guide provided'}</strong></div><div className="stage-buttons"><button className="announce" disabled={!current.student.active_audio} onClick={() => action(current, 'announce')}>▶ Announce name</button><button onClick={() => action(current, 'skip')}>Skip</button></div>{!current.student.active_audio && <p className="audio-warning">Approved audio is missing. Use the pronunciation guide.</p>}</> : <div className="stage-empty"><span>✓</span><h3>Waiting for the next graduate</h3><p>Scan a student ID to add them to the live queue.</p></div>}
+      </section>
+      <section className="panel queue-panel"><div className="panel-heading"><div><p className="eyebrow">UP NEXT</p><h3>Announcement queue</h3></div><span>{activeQueue.length} waiting</span></div><div className="queue-list">{activeQueue.slice(1).map((entry, index) => <div className="queue-row" key={entry.id}><span>{index + 1}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-dot' : 'warning-dot'} /></div>)}{activeQueue.length <= 1 && <p className="empty">Checked-in students will appear here.</p>}</div><div className="all-status"><strong>Processional progress</strong><div className="progress"><span style={{ width: `${ceremony?.entries.length ? ((ceremony.entries.filter(e => e.status === 'announced').length / ceremony.entries.length) * 100) : 0}%` }} /></div><small>{ceremony?.entries.filter(e => e.status === 'announced').length ?? 0} of {ceremony?.entries.length ?? 0} announced</small></div></section>
+    </div>
+  </>
+}
+
+export default App
