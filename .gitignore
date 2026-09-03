@@ -12,4 +12,7 @@ storage/audio/*
 !storage/audio/.gitkeep
 storage/backups/*
 !storage/backups/.gitkeep
+*.mp4
+*.mp3
+*.png
 
