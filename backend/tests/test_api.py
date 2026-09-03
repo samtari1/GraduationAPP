@@ -46,3 +46,10 @@ def test_csv_import_supports_native_names(client):
     assert response.json()["created"] == 1
     students = client.get("/api/students").json()
     assert students[0]["native_name"] == "محمد الخطيب"
+
+
+def test_frontend_routes_support_direct_navigation(client):
+    for path in ("/", "/students", "/ceremonies", "/stage-control"):
+        response = client.get(path)
+        assert response.status_code == 200
+        assert '<div id="root"></div>' in response.text

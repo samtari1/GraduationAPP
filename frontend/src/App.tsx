@@ -11,10 +11,24 @@ const navItems: { id: View; label: string; glyph: string }[] = [
   { id: 'control', label: 'Stage control', glyph: '▶' },
 ]
 
+const viewPaths: Record<View, string> = {
+  dashboard: '/',
+  students: '/students',
+  ceremonies: '/ceremonies',
+  control: '/stage-control',
+}
+
+const viewFromPath = (pathname: string): View => {
+  const normalized = pathname.replace(/\/+$/, '') || '/'
+  const match = (Object.entries(viewPaths) as [View, string][]).find(([, path]) => path === normalized)
+  return match?.[0] ?? 'dashboard'
+}
+
 const statusLabel = (value: string) => value.replaceAll('_', ' ')
 
 function App() {
-  const [view, setView] = useState<View>('dashboard')
+  const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname))
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('gradvoice.sidebarCollapsed') === 'true')
   const [students, setStudents] = useState<Student[]>([])
   const [ceremonies, setCeremonies] = useState<Ceremony[]>([])
   const [selectedCeremonyId, setSelectedCeremonyId] = useState<number | null>(null)
@@ -34,25 +48,55 @@ function App() {
     loadCore().catch((error) => setNotice(error.message))
   }, [])
 
+  useEffect(() => {
+    const handleHistoryNavigation = () => {
+      setView(viewFromPath(window.location.pathname))
+      setNotice('')
+    }
+    window.addEventListener('popstate', handleHistoryNavigation)
+    return () => window.removeEventListener('popstate', handleHistoryNavigation)
+  }, [])
+
+  useEffect(() => {
+    const label = navItems.find((item) => item.id === view)?.label ?? 'GradVoice'
+    document.title = `${label} | GradVoice`
+  }, [view])
+
+  useEffect(() => {
+    localStorage.setItem('gradvoice.sidebarCollapsed', String(sidebarCollapsed))
+  }, [sidebarCollapsed])
+
   const navigate = (target: View) => {
+    const path = viewPaths[target]
+    if (window.location.pathname !== path) window.history.pushState({ view: target }, '', path)
     setView(target)
     setNotice('')
   }
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar">
+    <div className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+      <aside className="sidebar" aria-label="Application sidebar">
         <div className="brand">
           <div className="brand-mark">G</div>
-          <div>
+          <div className="brand-copy">
             <strong>GradVoice</strong>
             <span>Ceremony studio</span>
           </div>
+          <button
+            className="sidebar-toggle"
+            type="button"
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          >
+            {sidebarCollapsed ? '›' : '‹'}
+          </button>
         </div>
         <nav aria-label="Main navigation">
           {navItems.map((item) => (
-            <button className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate(item.id)} key={item.id}>
-              <span>{item.glyph}</span>{item.label}
+            <button className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate(item.id)} key={item.id} title={sidebarCollapsed ? item.label : undefined} aria-label={item.label}>
+              <span className="nav-glyph">{item.glyph}</span><span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
