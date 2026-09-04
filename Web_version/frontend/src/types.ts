@@ -3,6 +3,8 @@ export type AudioAsset = {
   filename: string
   original_filename: string
   source: string
+  voice?: string | null
+  generation_input?: string | null
   approved: boolean
   url: string
 }
@@ -59,4 +61,3 @@ export type AuditEvent = {
   message: string
   created_at: string
 }
-

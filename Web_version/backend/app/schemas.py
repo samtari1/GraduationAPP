@@ -16,6 +16,14 @@ class AudioOut(BaseModel):
     approved: bool
     created_at: datetime
     url: str = ""
+    generation_input: Optional[str] = None
+
+
+class SpeechRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+    language_code: str = Field(pattern=r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})+$", max_length=35)
+    voice_name: str = Field(min_length=1, max_length=100)
+    speaking_rate: float = Field(default=1.0, ge=0.25, le=2.0)
 
 
 class StudentBase(BaseModel):
@@ -122,4 +130,3 @@ class AuditOut(BaseModel):
     entity_type: Optional[str]
     entity_id: Optional[int]
     created_at: datetime
-

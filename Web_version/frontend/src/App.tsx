@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import PronunciationTools from './PronunciationTools'
 import { api } from './api'
 import type { AuditEvent, Ceremony, CeremonyDetail, DashboardStats, Entry, Student } from './types'
 
@@ -219,6 +220,7 @@ function Students({ students, reload, setNotice }: { students: Student[]; reload
 function StudentModal({ student, close, reload, setNotice }: { student: Student | null; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', language: student?.language ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status ?? 'pending', notes: student?.notes ?? '' })
   const [audioFile, setAudioFile] = useState<File | null>(null)
+  const dirty = !!student && Object.entries(form).some(([key, value]) => value !== (student[key as keyof Student] ?? ''))
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
@@ -242,7 +244,9 @@ function StudentModal({ student, close, reload, setNotice }: { student: Student 
     <label className="wide">Exact ceremony announcement<input value={form.announcement_text} placeholder={form.display_name || 'Name to announce'} onChange={(e) => update('announcement_text', e.target.value)} /></label>
     <label className="wide upload-zone">Approved pronunciation audio<input type="file" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} /><span>{audioFile?.name ?? (student?.active_audio ? `Current: ${student.active_audio.original_filename}` : 'Choose an MP3, WAV, M4A, OGG, or WebM file')}</span></label>
     <label className="wide">Reviewer notes<textarea rows={3} value={form.notes} onChange={(e) => update('notes', e.target.value)} /></label>
-  </div><div className="modal-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary">Save record</button></div></form></div>
+  </div>
+  {student && <PronunciationTools student={student} dirty={dirty || !!audioFile} onApproved={async () => { await reload(); setNotice('Pronunciation selected for ceremony.'); close() }} />}
+  <div className="modal-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary">Save record</button></div></form></div>
 }
 
 function Ceremonies({ ceremonies, students, reload, setSelected, setNotice }: { ceremonies: Ceremony[]; students: Student[]; reload: () => Promise<void>; setSelected: (id: number) => void; setNotice: (value: string) => void }) {
@@ -255,6 +259,7 @@ function Ceremonies({ ceremonies, students, reload, setSelected, setNotice }: { 
   const unassigned = students.filter((student) => !detail?.entries.some((entry) => entry.student.id === student.id))
   return <>
     <div className="page-heading"><div><p className="eyebrow">EVENT PLANNING</p><h2>Ceremonies</h2><p>Organize graduates and confirm every announcement is ready.</p></div><button className="primary" onClick={() => setShowCreate(true)}>+ New ceremony</button></div>
+    {detail && <p><a href={`/api/ceremonies/${detail.id}/qr-cards`} target="_blank" rel="noreferrer">Open printable QR cards for {detail.name}</a></p>}
     <div className="ceremony-grid">
       <section className="ceremony-list">{ceremonies.map((ceremony) => <button key={ceremony.id} className={detail?.id === ceremony.id ? 'ceremony-card selected' : 'ceremony-card'} onClick={() => { loadDetail(ceremony.id); setSelected(ceremony.id) }}><span className="date-tile"><b>{new Date(`${ceremony.event_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</b><strong>{new Date(`${ceremony.event_date}T12:00:00`).getDate()}</strong></span><div><strong>{ceremony.name}</strong><small>{ceremony.location || 'Location not set'}</small><small>{ceremony.student_count} students</small></div><span>→</span></button>)}</section>
       <section className="panel ceremony-detail">{detail ? <><div className="panel-heading"><div><p className="eyebrow">CEREMONY ROSTER</p><h3>{detail.name}</h3></div><select defaultValue="" onChange={(e) => { assign(Number(e.target.value)); e.target.value = '' }}><option value="">+ Assign student</option>{unassigned.map((student) => <option value={student.id} key={student.id}>{student.display_name}</option>)}</select></div><div className="roster">{detail.entries.map((entry) => <div className="roster-row" key={entry.id}><span>{entry.position}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-mark' : 'missing-mark'}>{entry.student.active_audio ? '✓ Audio ready' : '! Audio missing'}</span></div>)}{detail.entries.length === 0 && <p className="empty">Assign students to build the processional order.</p>}</div></> : <div className="empty-state"><span>◇</span><h3>Select a ceremony</h3><p>Choose an event to review its roster.</p></div>}</section>
@@ -267,15 +272,36 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
   const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null)
   const [scan, setScan] = useState('')
   const audioRef = useRef<HTMLAudioElement | null>(null)
-  const load = () => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(setCeremony).catch((e) => setNotice(e.message)) : Promise.resolve()
-  useEffect(() => { load() }, [ceremonyId])
+  const [connected, setConnected] = useState(false)
+  const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(value => { setCeremony(value); setConnected(true) }).catch((e) => { setConnected(false); setNotice(e.message) }) : Promise.resolve(), [ceremonyId, setNotice])
+  useEffect(() => {
+    let stopped = false
+    let timer: ReturnType<typeof setTimeout>
+    const poll = async () => { await load(); if (!stopped) timer = setTimeout(poll, 2000) }
+    void poll()
+    return () => { stopped = true; clearTimeout(timer) }
+  }, [load])
   const activeQueue = ceremony?.entries.filter((entry) => ['checked_in', 'queued'].includes(entry.status)).sort((a,b) => a.position - b.position) ?? []
   const current = activeQueue[0]
   const scanned = async (event: React.FormEvent) => { event.preventDefault(); if (!ceremonyId || !scan.trim()) return; try { await api.post(`/api/ceremonies/${ceremonyId}/scan`, { token: scan }); setScan(''); await load() } catch (e) { setNotice((e as Error).message) } }
-  const action = async (entry: Entry, value: string) => { try { if (['announce', 'replay'].includes(value) && entry.student.active_audio) { audioRef.current?.pause(); audioRef.current = new Audio(entry.student.active_audio.url); await audioRef.current.play() } await api.post(`/api/entries/${entry.id}/action`, { action: value }); await load() } catch (e) { setNotice((e as Error).message) } }
+  const action = async (entry: Entry, value: string) => {
+    try {
+      if (['announce', 'replay'].includes(value)) {
+        if (audioRef.current && !audioRef.current.paused) throw new Error('Wait for the current announcement to finish.')
+        const latest = await api.get<CeremonyDetail>(`/api/ceremonies/${entry.ceremony_id}`)
+        const fresh = latest.entries.find(item => item.id === entry.id)
+        if (!fresh?.student.active_audio?.approved || fresh.student.pronunciation_status !== 'approved') throw new Error('Audio is missing or needs review. Approve a pronunciation first.')
+        if (value === 'announce' && fresh.status === 'announced') throw new Error('Student has already been announced.')
+        audioRef.current = new Audio(fresh.student.active_audio.url)
+        await audioRef.current.play()
+      }
+      await api.post(`/api/entries/${entry.id}/action`, { action: value })
+      await load()
+    } catch (e) { setNotice((e as Error).message) }
+  }
   if (!ceremonyId) return <div className="empty-state tall"><span>▶</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
   return <>
-    <div className="stage-heading"><div><p className="eyebrow">LIVE CEREMONY MODE</p><h2>{ceremony?.name ?? 'Loading…'}</h2></div><div className="stage-status"><span className="live-dot" />Local and ready</div></div>
+    <div className="stage-heading"><div><p className="eyebrow">LIVE CEREMONY MODE · CEREMONY ID {ceremonyId}</p><h2>{ceremony?.name ?? 'Loading…'}</h2></div><div className="stage-status">{connected ? 'Local server connected' : 'Local server disconnected'}</div></div>
     <form className="scan-bar" onSubmit={scanned}><label><span>SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan QR code, swipe card, or enter student ID" /></label><button className="primary">Check in</button></form>
     <div className="stage-grid">
       <section className="now-card">

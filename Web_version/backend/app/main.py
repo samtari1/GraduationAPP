@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
+import json
+from html import escape
 import shutil
 import uuid
 from datetime import datetime, timezone
@@ -9,7 +11,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -17,6 +19,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import AUDIO_DIR, BACKUP_DIR, Base, DATA_DIR, engine, get_db
 from .models import AudioAsset, AuditEvent, Ceremony, CeremonyEntry, Student
+from . import google_speech
 from .schemas import (
     AssignStudent,
     AuditOut,
@@ -29,6 +32,8 @@ from .schemas import (
     StudentCreate,
     StudentOut,
     StudentUpdate,
+    AudioOut,
+    SpeechRequest,
 )
 
 
@@ -120,10 +125,11 @@ def update_student(student_pk: int, payload: StudentUpdate, db: Session = Depend
         raise HTTPException(404, "Student not found")
     updates = payload.model_dump(exclude_unset=True)
     audio_sensitive = {"display_name", "native_name", "language", "phonetic_spelling", "announcement_text"}
-    if audio_sensitive.intersection(updates) and student.pronunciation_status == "approved":
-        student.pronunciation_status = "needs_review"
+    pronunciation_changed = any(getattr(student, key) != updates[key] for key in audio_sensitive.intersection(updates))
     for key, value in updates.items():
         setattr(student, key, value)
+    if pronunciation_changed and student.active_audio_id:
+        student.pronunciation_status = "needs_review"
     audit(db, "student.updated", f"Updated {student.display_name}", "student", student.id)
     db.commit()
     db.refresh(student)
@@ -137,11 +143,17 @@ async def import_students(file: UploadFile = File(...), db: Session = Depends(ge
     text = (await file.read()).decode("utf-8-sig")
     reader = csv.DictReader(io.StringIO(text))
     required = {"student_id", "display_name"}
-    if not required.issubset(set(reader.fieldnames or [])):
-        raise HTTPException(400, "CSV requires student_id and display_name columns")
+    columns = set(reader.fieldnames or [])
+    coworker_format = {"StudentID", "FirstName", "LastName"}.issubset(columns)
+    if not required.issubset(columns) and not coworker_format:
+        raise HTTPException(400, "CSV requires student_id/display_name or StudentID/FirstName/LastName columns")
     created = updated = skipped = 0
     errors: list[str] = []
     for line, row in enumerate(reader, start=2):
+        if coworker_format:
+            row = {**row, "student_id": row.get("StudentID"),
+                   "display_name": " ".join(filter(None, [(row.get("FirstName") or "").strip(), (row.get("LastName") or "").strip()])),
+                   "phonetic_spelling": row.get("Pronunciation") or row.get("pronunciation")}
         sid, name = (row.get("student_id") or "").strip(), (row.get("display_name") or "").strip()
         if not sid or not name:
             skipped += 1
@@ -164,6 +176,7 @@ async def import_students(file: UploadFile = File(...), db: Session = Depends(ge
         else:
             db.add(Student(student_id=sid, qr_token=uuid.uuid4().hex, **values))
             created += 1
+        db.flush()
     audit(db, "students.imported", f"CSV import: {created} created, {updated} updated, {skipped} skipped")
     db.commit()
     return {"created": created, "updated": updated, "skipped": skipped, "errors": errors[:20]}
@@ -286,9 +299,10 @@ def scan_student(ceremony_id: int, payload: ScanRequest, db: Session = Depends(g
         raise HTTPException(409, "Student is not assigned to this ceremony")
     if entry.status == "announced":
         raise HTTPException(409, "Student has already been announced")
-    entry.status = "checked_in"
-    entry.checked_in_at = utcnow()
-    audit(db, "ceremony.scanned", f"Checked in {student.display_name}", "ceremony_entry", entry.id)
+    if entry.status not in {"checked_in", "queued"}:
+        entry.status = "checked_in"
+        entry.checked_in_at = utcnow()
+        audit(db, "ceremony.scanned", f"Checked in {student.display_name}", "ceremony_entry", entry.id)
     db.commit()
     db.refresh(entry)
     result = EntryOut.model_validate(entry)
@@ -312,13 +326,15 @@ def entry_action(entry_id: int, payload: EntryAction, db: Session = Depends(get_
     if payload.action == "queue":
         entry.status = "queued"
     elif payload.action == "announce":
-        if not entry.student.active_audio:
+        if entry.status == "announced":
+            raise HTTPException(409, "Student has already been announced; use replay deliberately")
+        if not playable_audio(entry.student):
             raise HTTPException(409, "No approved audio is available")
         entry.status = "announced"
         entry.announced_at = utcnow()
         entry.play_count += 1
     elif payload.action == "replay":
-        if not entry.student.active_audio:
+        if not playable_audio(entry.student):
             raise HTTPException(409, "No approved audio is available")
         entry.play_count += 1
     elif payload.action == "skip":
@@ -351,6 +367,8 @@ def readiness(ceremony_id: int, db: Session = Depends(get_db)):
         student = entry.student
         if not student.active_audio_id:
             issues.append({"student_id": student.student_id, "name": student.display_name, "issue": "No approved audio"})
+        elif not student.active_audio or not (AUDIO_DIR / student.active_audio.filename).is_file():
+            issues.append({"student_id": student.student_id, "name": student.display_name, "issue": "Audio file missing"})
         elif student.pronunciation_status != "approved":
             issues.append({"student_id": student.student_id, "name": student.display_name, "issue": "Pronunciation not approved"})
     return {"ready": not issues, "total": len(ceremony.entries), "issue_count": len(issues), "issues": issues}
@@ -375,13 +393,126 @@ def create_backup(db: Session = Depends(get_db)):
     return {"filename": destination.name, "path": str(destination)}
 
 
+def playable_audio(student):
+    return bool(student.active_audio and student.active_audio.approved
+                and student.pronunciation_status == "approved"
+                and (AUDIO_DIR / student.active_audio.filename).is_file())
+
+
+def audio_out(asset):
+    return AudioOut.model_validate(asset).model_copy(update={"url": f"/media/{asset.filename}"})
+
+
+def pronunciation_snapshot(student):
+    return {key: getattr(student, key) for key in
+            ("display_name", "native_name", "language", "phonetic_spelling", "announcement_text")}
+
+
+@app.get("/api/speech/voices")
+def speech_voices(language_code: str = "en-US"):
+    return google_speech.list_voices(language_code)
+
+
+@app.get("/api/students/{student_pk}/audio", response_model=list[AudioOut])
+def list_audio(student_pk: int, db: Session = Depends(get_db)):
+    if not db.get(Student, student_pk):
+        raise HTTPException(404, "Student not found")
+    return [audio_out(asset) for asset in db.scalars(
+        select(AudioAsset).where(AudioAsset.student_id == student_pk).order_by(AudioAsset.id.desc())).all()]
+
+
+@app.post("/api/students/{student_pk}/speech", response_model=AudioOut, status_code=201)
+def generate_speech(student_pk: int, payload: SpeechRequest, db: Session = Depends(get_db)):
+    student = db.get(Student, student_pk)
+    if not student:
+        raise HTTPException(404, "Student not found")
+    if not payload.text.strip():
+        raise HTTPException(422, "Speech text must not be blank")
+    metadata = {**payload.model_dump(), "provider": "google-cloud", "student_snapshot": pronunciation_snapshot(student)}
+    # Release the database read transaction before waiting on the external provider.
+    db.rollback()
+    content = google_speech.synthesize(payload.text, payload.language_code, payload.voice_name, payload.speaking_rate)
+    filename = f"{student_pk}-{uuid.uuid4().hex}.mp3"
+    destination = AUDIO_DIR / filename
+    try:
+        destination.write_bytes(content)
+        asset = AudioAsset(student_id=student_pk, filename=filename,
+                           original_filename=f"Google pronunciation ({payload.voice_name}).mp3",
+                           source="google-cloud", voice=payload.voice_name,
+                           generation_input=json.dumps(metadata, ensure_ascii=False), approved=False)
+        db.add(asset)
+        db.flush()
+        audit(db, "audio.generated", f"Generated Google audio candidate for student record {student_pk}", "student", student_pk)
+        db.commit()
+    except Exception:
+        db.rollback()
+        destination.unlink(missing_ok=True)
+        raise
+    return audio_out(asset)
+
+
+@app.post("/api/students/{student_pk}/audio/{audio_id}/approve", response_model=StudentOut)
+def approve_audio(student_pk: int, audio_id: int, db: Session = Depends(get_db)):
+    student = db.scalar(student_query().where(Student.id == student_pk))
+    asset = db.get(AudioAsset, audio_id)
+    if not student or not asset or asset.student_id != student_pk:
+        raise HTTPException(404, "Student audio candidate not found")
+    if not (AUDIO_DIR / asset.filename).is_file():
+        raise HTTPException(409, "Audio file is missing. Upload or generate a new candidate.")
+    if asset.source == "google-cloud" and asset.generation_input:
+        snapshot = json.loads(asset.generation_input).get("student_snapshot")
+        if snapshot != pronunciation_snapshot(student):
+            raise HTTPException(409, "Pronunciation details changed since generation. Generate a new candidate first.")
+    asset.approved = True
+    student.active_audio = asset
+    student.pronunciation_status = "approved"
+    audit(db, "audio.approved", f"Selected audio candidate {audio_id} for {student.display_name}", "student", student.id)
+    db.commit()
+    return serialize_student(student)
+
+
+@app.get("/api/students/{student_pk}/qr.svg")
+def student_qr(student_pk: int, db: Session = Depends(get_db)):
+    student = db.get(Student, student_pk)
+    if not student:
+        raise HTTPException(404, "Student not found")
+    try:
+        import qrcode
+        from qrcode.image.svg import SvgPathImage
+    except ImportError:
+        raise HTTPException(503, "Install requirements-integrations.txt to enable QR generation.")
+    output = io.BytesIO()
+    qrcode.make(student.qr_token, image_factory=SvgPathImage, border=4).save(output)
+    return Response(output.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/api/ceremonies/{ceremony_id}/qr-cards", response_class=HTMLResponse)
+def qr_cards(ceremony_id: int, db: Session = Depends(get_db)):
+    ceremony = ceremony_detail(db, ceremony_id)
+    cards = "".join(
+        f'<article><img src="/api/students/{entry.student.id}/qr.svg" alt="QR code" />'
+        f'<h2 dir="auto">{escape(entry.student.display_name)}</h2>'
+        f'<p>{escape(entry.student.program)}</p><small>{escape(ceremony.name)} · #{entry.position}</small></article>'
+        for entry in ceremony.entries)
+    return HTMLResponse(f'''<!doctype html><html lang="en"><head><meta charset="utf-8">
+        <title>QR cards — {escape(ceremony.name)}</title><style>
+        body {{ font-family: sans-serif; margin: 20px; }} .cards {{ display:grid; grid-template-columns:repeat(2,1fr); gap:18px; }}
+        article {{ border:1px solid #aaa; text-align:center; padding:16px; break-inside:avoid; }}
+        img {{ width:180px; height:180px; }} h2 {{ font-size:20px; overflow-wrap:anywhere; }}
+        @media print {{ .instructions {{display:none}} }} </style></head><body>
+        <p class="instructions">Use your browser's Print command. Confirm every QR image has loaded before printing.</p>
+        <div class="cards">{cards}</div></body></html>''')
+
+
 FRONTEND_DIST = Path(__file__).resolve().parents[2] / "frontend" / "dist"
 if FRONTEND_DIST.exists():
     app.mount("/assets", StaticFiles(directory=FRONTEND_DIST / "assets"), name="assets")
 
     @app.get("/{path:path}", include_in_schema=False)
     def serve_frontend(path: str):
-        candidate = FRONTEND_DIST / path
+        candidate = (FRONTEND_DIST / path).resolve()
+        if not candidate.is_relative_to(FRONTEND_DIST.resolve()) or path.startswith("api/"):
+            raise HTTPException(404, "Not found")
         if path and candidate.is_file():
             return FileResponse(candidate)
         return FileResponse(FRONTEND_DIST / "index.html")
