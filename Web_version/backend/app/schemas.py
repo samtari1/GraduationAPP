@@ -122,6 +122,10 @@ class EntryAction(BaseModel):
     action: str
 
 
+class QueueReorder(BaseModel):
+    entry_ids: list[int] = Field(min_length=1, max_length=500)
+
+
 class AuditOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

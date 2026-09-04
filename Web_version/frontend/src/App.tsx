@@ -271,6 +271,8 @@ function Ceremonies({ ceremonies, students, reload, setSelected, setNotice }: { 
 function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; setNotice: (value: string) => void }) {
   const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null)
   const [scan, setScan] = useState('')
+  const [rosterSearch, setRosterSearch] = useState('')
+  const [draggedEntryId, setDraggedEntryId] = useState<number | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [connected, setConnected] = useState(false)
   const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(value => { setCeremony(value); setConnected(true) }).catch((e) => { setConnected(false); setNotice(e.message) }) : Promise.resolve(), [ceremonyId, setNotice])
@@ -283,7 +285,40 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
   }, [load])
   const activeQueue = ceremony?.entries.filter((entry) => ['checked_in', 'queued'].includes(entry.status)).sort((a,b) => a.position - b.position) ?? []
   const current = activeQueue[0]
+  const nextExpected = ceremony?.entries.slice().sort((a,b) => a.position - b.position).find((entry) => entry.status === 'expected')
+  const visibleRoster = ceremony?.entries.filter((entry) => {
+    const query = rosterSearch.trim().toLocaleLowerCase()
+    return !query || entry.student.display_name.toLocaleLowerCase().includes(query) || entry.student.student_id.toLocaleLowerCase().includes(query) || entry.student.program.toLocaleLowerCase().includes(query)
+  }).sort((a,b) => a.position - b.position) ?? []
   const scanned = async (event: React.FormEvent) => { event.preventDefault(); if (!ceremonyId || !scan.trim()) return; try { await api.post(`/api/ceremonies/${ceremonyId}/scan`, { token: scan }); setScan(''); await load() } catch (e) { setNotice((e as Error).message) } }
+  const manualCheckIn = async (entry: Entry) => {
+    if (!ceremonyId) return
+    try {
+      await api.post(`/api/ceremonies/${ceremonyId}/scan`, { token: entry.student.student_id })
+      await load()
+    } catch (e) { setNotice((e as Error).message) }
+  }
+  const undoCheckIn = async (entry: Entry) => action(entry, 'reset')
+  const reorderQueue = async (sourceId: number, targetId: number) => {
+    if (!ceremonyId || sourceId === targetId) return
+    const entryIds = activeQueue.map((entry) => entry.id)
+    const sourceIndex = entryIds.indexOf(sourceId)
+    const targetIndex = entryIds.indexOf(targetId)
+    if (sourceIndex < 1 || targetIndex < 1) return
+    const [moved] = entryIds.splice(sourceIndex, 1)
+    entryIds.splice(targetIndex, 0, moved)
+    setDraggedEntryId(null)
+    try {
+      const updated = await api.post<CeremonyDetail>(`/api/ceremonies/${ceremonyId}/queue/reorder`, { entry_ids: entryIds })
+      setCeremony(updated)
+    } catch (e) { setNotice((e as Error).message); await load() }
+  }
+  const moveQueueEntry = (entryId: number, offset: number) => {
+    const index = activeQueue.findIndex((entry) => entry.id === entryId)
+    const target = activeQueue[index + offset]
+    if (index < 1 || !target || index + offset < 1) return
+    void reorderQueue(entryId, target.id)
+  }
   const action = async (entry: Entry, value: string) => {
     try {
       if (['announce', 'replay'].includes(value)) {
@@ -302,14 +337,21 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
   if (!ceremonyId) return <div className="empty-state tall"><span>▶</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
   return <>
     <div className="stage-heading"><div><p className="eyebrow">LIVE CEREMONY MODE · CEREMONY ID {ceremonyId}</p><h2>{ceremony?.name ?? 'Loading…'}</h2></div><div className="stage-status">{connected ? 'Local server connected' : 'Local server disconnected'}</div></div>
-    <form className="scan-bar" onSubmit={scanned}><label><span>SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan QR code, swipe card, or enter student ID" /></label><button className="primary">Check in</button></form>
+    <div className="stage-checkin-tools"><form className="scan-bar" onSubmit={scanned}><label><span>SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan QR code, swipe card, or enter student ID" /></label><button className="primary">Check in</button></form><button className="secondary next-student-button" disabled={!nextExpected} onClick={() => nextExpected && manualCheckIn(nextExpected)}>Next student{nextExpected ? `: ${nextExpected.student.display_name}` : ''}</button></div>
     <div className="stage-grid">
       <section className="now-card">
         <p className="eyebrow light">NOW AT THE STAGE</p>
-        {current ? <><span className="queue-number">#{current.position}</span><h3>{current.student.announcement_text || current.student.display_name}</h3>{current.student.native_name && <p className="native" dir="auto">{current.student.native_name}</p>}<p className="program">{current.student.program}</p><div className="phonetic"><small>PRONUNCIATION GUIDE</small><strong>{current.student.phonetic_spelling || 'No phonetic guide provided'}</strong></div><div className="stage-buttons"><button className="announce" disabled={!current.student.active_audio} onClick={() => action(current, 'announce')}>▶ Announce name</button><button onClick={() => action(current, 'skip')}>Skip</button></div>{!current.student.active_audio && <p className="audio-warning">Approved audio is missing. Use the pronunciation guide.</p>}</> : <div className="stage-empty"><span>✓</span><h3>Waiting for the next graduate</h3><p>Scan a student ID to add them to the live queue.</p></div>}
+        {current ? <><span className="queue-number">#{current.position}</span><h3>{current.student.announcement_text || current.student.display_name}</h3>{current.student.native_name && <p className="native" dir="auto">{current.student.native_name}</p>}<p className="program">{current.student.program}</p><div className="phonetic"><small>PRONUNCIATION GUIDE</small><strong>{current.student.phonetic_spelling || 'No phonetic guide provided'}</strong></div><div className="stage-buttons"><button className="announce" disabled={!current.student.active_audio} onClick={() => action(current, 'announce')}>▶ Announce name</button><button onClick={() => action(current, 'skip')}>Skip</button><button onClick={() => undoCheckIn(current)}>Undo check-in</button></div>{!current.student.active_audio && <p className="audio-warning">Approved audio is missing. Use the pronunciation guide.</p>}</> : <div className="stage-empty"><span>✓</span><h3>Waiting for the next graduate</h3><p>Scan a student ID or choose someone from the roster.</p></div>}
       </section>
-      <section className="panel queue-panel"><div className="panel-heading"><div><p className="eyebrow">UP NEXT</p><h3>Announcement queue</h3></div><span>{activeQueue.length} waiting</span></div><div className="queue-list">{activeQueue.slice(1).map((entry, index) => <div className="queue-row" key={entry.id}><span>{index + 1}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-dot' : 'warning-dot'} /></div>)}{activeQueue.length <= 1 && <p className="empty">Checked-in students will appear here.</p>}</div><div className="all-status"><strong>Processional progress</strong><div className="progress"><span style={{ width: `${ceremony?.entries.length ? ((ceremony.entries.filter(e => e.status === 'announced').length / ceremony.entries.length) * 100) : 0}%` }} /></div><small>{ceremony?.entries.filter(e => e.status === 'announced').length ?? 0} of {ceremony?.entries.length ?? 0} announced</small></div></section>
+      <section className="panel queue-panel"><div className="panel-heading"><div><p className="eyebrow">UP NEXT</p><h3>Announcement queue</h3><small>Drag waiting students or use the arrow buttons.</small></div><span>{activeQueue.length} waiting</span></div><div className="queue-list">{activeQueue.slice(1).map((entry, index) => <div className={`queue-row draggable${draggedEntryId === entry.id ? ' dragging' : ''}`} draggable key={entry.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(entry.id)); setDraggedEntryId(entry.id) }} onDragEnd={() => setDraggedEntryId(null)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }} onDrop={(event) => { event.preventDefault(); const sourceId = Number(event.dataTransfer.getData('text/plain')) || draggedEntryId; if (sourceId) void reorderQueue(sourceId, entry.id) }}><span className="drag-handle" title="Drag to reorder">⠿</span><span>{index + 1}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-dot' : 'warning-dot'} /><span className="queue-move-buttons"><button className="text-button" disabled={index === 0} onClick={() => moveQueueEntry(entry.id, -1)} aria-label={`Move ${entry.student.display_name} earlier`}>↑</button><button className="text-button" disabled={index === activeQueue.length - 2} onClick={() => moveQueueEntry(entry.id, 1)} aria-label={`Move ${entry.student.display_name} later`}>↓</button></span><button className="text-button" onClick={() => undoCheckIn(entry)}>Undo</button></div>)}{activeQueue.length <= 1 && <p className="empty">Checked-in students will appear here.</p>}</div><div className="all-status"><strong>Processional progress</strong><div className="progress"><span style={{ width: `${ceremony?.entries.length ? ((ceremony.entries.filter(e => e.status === 'announced').length / ceremony.entries.length) * 100) : 0}%` }} /></div><small>{ceremony?.entries.filter(e => e.status === 'announced').length ?? 0} of {ceremony?.entries.length ?? 0} announced</small></div></section>
     </div>
+    <section className="panel stage-roster-panel">
+      <div className="panel-heading"><div><p className="eyebrow">MANUAL FALLBACK</p><h3>Check in from ceremony roster</h3></div><label className="roster-search"><span>Search roster</span><input value={rosterSearch} onChange={(event) => setRosterSearch(event.target.value)} placeholder="Name, student ID, or program" /></label></div>
+      <div className="stage-roster-list">
+        {visibleRoster.map((entry) => <div className="stage-roster-row" key={entry.id}><span className="roster-position">{entry.position}</span><div><strong>{entry.student.display_name}</strong><small>ID {entry.student.student_id} · {entry.student.program}</small></div><span className={`roster-status ${entry.status}`}>{entry.status.replace('_', ' ')}</span>{['checked_in', 'queued', 'announced'].includes(entry.status) ? <button className="secondary" onClick={() => undoCheckIn(entry)}>{entry.status === 'announced' ? 'Undo announcement' : 'Undo check-in'}</button> : <button className="secondary" disabled={!['expected', 'skipped'].includes(entry.status)} onClick={() => manualCheckIn(entry)}>{entry.status === 'skipped' ? 'Check in again' : 'Check in'}</button>}</div>)}
+        {!visibleRoster.length && <p className="empty">No roster entries match your search.</p>}
+      </div>
+    </section>
   </>
 }
 

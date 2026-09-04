@@ -28,6 +28,7 @@ from .schemas import (
     CeremonyOut,
     EntryAction,
     EntryOut,
+    QueueReorder,
     ScanRequest,
     StudentCreate,
     StudentOut,
@@ -311,6 +312,30 @@ def scan_student(ceremony_id: int, payload: ScanRequest, db: Session = Depends(g
     return result
 
 
+@app.post("/api/ceremonies/{ceremony_id}/queue/reorder", response_model=CeremonyDetail)
+def reorder_queue(ceremony_id: int, payload: QueueReorder, db: Session = Depends(get_db)):
+    ceremony = ceremony_detail(db, ceremony_id)
+    active = sorted(
+        (entry for entry in ceremony.entries if entry.status in {"checked_in", "queued"}),
+        key=lambda entry: entry.position,
+    )
+    active_ids = [entry.id for entry in active]
+    if len(payload.entry_ids) != len(set(payload.entry_ids)):
+        raise HTTPException(422, "Queue order contains a duplicate entry")
+    if set(payload.entry_ids) != set(active_ids):
+        raise HTTPException(409, "The queue changed. Refresh and try reordering again.")
+    if active_ids and payload.entry_ids[0] != active_ids[0]:
+        raise HTTPException(409, "The student currently at the stage cannot be moved")
+
+    positions = sorted(entry.position for entry in active)
+    entries_by_id = {entry.id: entry for entry in active}
+    for position, entry_id in zip(positions, payload.entry_ids):
+        entries_by_id[entry_id].position = position
+    audit(db, "ceremony.queue_reordered", "Reordered the waiting announcement queue", "ceremony", ceremony_id)
+    db.commit()
+    return serialize_detail(ceremony_detail(db, ceremony_id))
+
+
 @app.post("/api/entries/{entry_id}/action", response_model=EntryOut)
 def entry_action(entry_id: int, payload: EntryAction, db: Session = Depends(get_db)):
     entry = db.scalar(
@@ -411,6 +436,11 @@ def pronunciation_snapshot(student):
 @app.get("/api/speech/voices")
 def speech_voices(language_code: str = "en-US"):
     return google_speech.list_voices(language_code)
+
+
+@app.get("/api/speech/languages", response_model=list[str])
+def speech_languages():
+    return google_speech.list_languages()
 
 
 @app.get("/api/students/{student_pk}/audio", response_model=list[AudioOut])

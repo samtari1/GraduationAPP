@@ -52,6 +52,25 @@ def list_voices(language_code):
         client.transport.close()
 
 
+def list_languages():
+    """Return every language code that currently has a usable Google voice."""
+    client = get_client()
+    try:
+        response = client.list_voices(request={}, timeout=20, retry=None)
+        codes = {
+            code
+            for voice in response.voices
+            if any(voice.name.casefold().startswith(f"{code}-".casefold())
+                   for code in voice.language_codes)
+            for code in voice.language_codes
+        }
+        return sorted(codes, key=str.casefold)
+    except Exception as error:
+        raise provider_error(error) from None
+    finally:
+        client.transport.close()
+
+
 def synthesize(text, language_code, voice_name, speaking_rate):
     client = get_client()
     from google.cloud import texttospeech

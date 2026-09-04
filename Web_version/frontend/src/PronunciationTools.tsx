@@ -4,10 +4,19 @@ import type { AudioAsset, Student } from './types'
 
 type Voice = { name: string; language_codes: string[]; gender: string }
 
+const languageDisplayName = (code: string) => {
+  try {
+    return new Intl.DisplayNames([navigator.language], { type: 'language' }).of(code) || code
+  } catch {
+    return code
+  }
+}
+
 export default function PronunciationTools({ student, dirty, onApproved }: {
   student: Student; dirty: boolean; onApproved: () => Promise<void>
 }) {
   const [assets, setAssets] = useState<AudioAsset[]>([])
+  const [languages, setLanguages] = useState<string[]>([])
   const [voices, setVoices] = useState<Voice[]>([])
   const [language, setLanguage] = useState(/^[a-z]{2,3}-/i.test(student.language ?? '') ? student.language! : 'en-US')
   const [voice, setVoice] = useState('')
@@ -20,16 +29,46 @@ export default function PronunciationTools({ student, dirty, onApproved }: {
     api.get<AudioAsset[]>(`/api/students/${student.id}/audio`).then(setAssets).catch(e => setMessage(e.message))
   }, [student.id])
 
-  const loadVoices = async () => {
+  const loadVoices = async (languageCode: string) => {
     setBusy(true); setMessage('')
     try {
-      const result = await api.get<Voice[]>(`/api/speech/voices?language_code=${encodeURIComponent(language)}`)
+      const result = await api.get<Voice[]>(`/api/speech/voices?language_code=${encodeURIComponent(languageCode)}`)
       setVoices(result)
       setVoice(result[0]?.name ?? '')
-      if (!result.length) setMessage('No voices found for this language code.')
+      if (!result.length) setMessage('No usable voices were found for this language.')
     } catch (error) { setMessage((error as Error).message) }
     finally { setBusy(false) }
   }
+
+  useEffect(() => {
+    let active = true
+    const prepareLanguages = async () => {
+      setBusy(true); setMessage('')
+      try {
+        const result = await api.get<string[]>('/api/speech/languages')
+        if (!active) return
+        const sorted = result.slice().sort((a, b) => languageDisplayName(a).localeCompare(languageDisplayName(b)))
+        setLanguages(sorted)
+        const preferred = result.includes(language) ? language : result.includes('en-US') ? 'en-US' : result[0]
+        if (!preferred) {
+          setMessage('Google did not return any supported languages.')
+          return
+        }
+        setLanguage(preferred)
+        const availableVoices = await api.get<Voice[]>(`/api/speech/voices?language_code=${encodeURIComponent(preferred)}`)
+        if (!active) return
+        setVoices(availableVoices)
+        setVoice(availableVoices[0]?.name ?? '')
+        if (!availableVoices.length) setMessage('No usable voices were found for this language.')
+      } catch (error) {
+        if (active) setMessage((error as Error).message)
+      } finally {
+        if (active) setBusy(false)
+      }
+    }
+    void prepareLanguages()
+    return () => { active = false }
+  }, [student.id])
 
   const generate = async () => {
     setBusy(true); setMessage('')
@@ -57,8 +96,7 @@ export default function PronunciationTools({ student, dirty, onApproved }: {
     <p>Generation sends the text below to Google Cloud and may incur charges. Saved MP3s play offline. Credentials stay on the server.</p>
     {dirty && <p className="studio-message">Save your record changes before generating or selecting audio.</p>}
     <div className="speech-settings">
-      <label>Language code<input value={language} placeholder="en-US, vi-VN, ar-XA…" onChange={e => { setLanguage(e.target.value); setVoices([]); setVoice('') }} /></label>
-      <button type="button" className="secondary" disabled={busy || !language.trim()} onClick={loadVoices}>Load Google voices</button>
+      <label className="wide">Language<select value={language} disabled={busy || !languages.length} onChange={e => { const code = e.target.value; setLanguage(code); setVoices([]); setVoice(''); void loadVoices(code) }}><option value="">{busy ? 'Loading supported languages…' : 'Select a language'}</option>{languages.map(code => <option value={code} key={code}>{languageDisplayName(code)} · {code}</option>)}</select></label>
       <label className="wide">Voice<select value={voice} onChange={e => setVoice(e.target.value)}><option value="">Load and select a voice</option>{voices.map(item => <option value={item.name} key={item.name}>{item.name} · {item.gender}</option>)}</select></label>
       <label className="wide">Text to pronounce<textarea rows={2} value={text} onChange={e => setText(e.target.value)} maxLength={500} /></label>
       <div className="wide speech-presets">

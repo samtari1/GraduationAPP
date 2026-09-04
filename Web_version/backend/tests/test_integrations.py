@@ -78,6 +78,34 @@ def test_repeat_scans_are_idempotent_and_do_not_call_google(client, monkeypatch)
     assert len(scans) == 1
 
 
+def test_check_in_can_be_undone_and_waiting_queue_reordered(client):
+    people = [student(client, f"10{index}", f"Student {index}") for index in range(3)]
+    ceremony = client.post("/api/ceremonies", json={"name": "Graduation", "event_date": "2027-05-01"}).json()
+    for person in people:
+        client.post(f"/api/ceremonies/{ceremony['id']}/students", json={"student_id": person["id"]})
+        client.post(f"/api/ceremonies/{ceremony['id']}/scan", json={"token": person["student_id"]})
+
+    detail = client.get(f"/api/ceremonies/{ceremony['id']}").json()
+    active = detail["entries"]
+    reordered_ids = [active[0]["id"], active[2]["id"], active[1]["id"]]
+    reordered = client.post(
+        f"/api/ceremonies/{ceremony['id']}/queue/reorder", json={"entry_ids": reordered_ids}
+    )
+    assert reordered.status_code == 200
+    assert [entry["id"] for entry in reordered.json()["entries"]] == reordered_ids
+
+    moving_current = client.post(
+        f"/api/ceremonies/{ceremony['id']}/queue/reorder",
+        json={"entry_ids": [reordered_ids[1], reordered_ids[0], reordered_ids[2]]},
+    )
+    assert moving_current.status_code == 409
+
+    undone = client.post(f"/api/entries/{reordered_ids[2]}/action", json={"action": "reset"})
+    assert undone.status_code == 200
+    assert undone.json()["status"] == "expected"
+    assert undone.json()["checked_in_at"] is None
+
+
 def test_coworker_csv_and_qr_token(client, monkeypatch):
     import qrcode
     original_make = qrcode.make
@@ -148,4 +176,24 @@ def test_google_adapter_filters_bare_voice_aliases(monkeypatch):
     voices = google_speech.list_voices("en-US")
 
     assert [voice["name"] for voice in voices] == ["en-US-Chirp3-HD-Achernar"]
+    client.transport.close.assert_called_once()
+
+
+def test_google_adapter_lists_languages_with_usable_voices(monkeypatch):
+    from backend.app import google_speech
+    from google.cloud import texttospeech
+
+    client = MagicMock()
+    client.list_voices.return_value.voices = [
+        SimpleNamespace(name="Achernar", language_codes=["en-US"],
+                        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE),
+        SimpleNamespace(name="en-US-Standard-A", language_codes=["en-US"],
+                        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE),
+        SimpleNamespace(name="vi-VN-Standard-A", language_codes=["vi-VN"],
+                        ssml_gender=texttospeech.SsmlVoiceGender.FEMALE),
+    ]
+    monkeypatch.setattr(google_speech, "get_client", lambda: client)
+
+    assert google_speech.list_languages() == ["en-US", "vi-VN"]
+    client.list_voices.assert_called_once_with(request={}, timeout=20, retry=None)
     client.transport.close.assert_called_once()
