@@ -75,9 +75,12 @@ def synthesize(text, language_code, voice_name, speaking_rate):
     client = get_client()
     from google.cloud import texttospeech
     try:
+        voice_options = {"language_code": language_code}
+        if voice_name != "__auto__":
+            voice_options["name"] = voice_name
         response = client.synthesize_speech(
             input=texttospeech.SynthesisInput(text=text),
-            voice=texttospeech.VoiceSelectionParams(language_code=language_code, name=voice_name),
+            voice=texttospeech.VoiceSelectionParams(**voice_options),
             audio_config=texttospeech.AudioConfig(
                 audio_encoding=texttospeech.AudioEncoding.MP3, speaking_rate=speaking_rate),
             timeout=45, retry=None,

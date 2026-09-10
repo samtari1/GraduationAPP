@@ -49,15 +49,33 @@ def test_candidate_generation_approval_and_offline_playback(client, monkeypatch)
     assert len(client.get(f"/api/students/{person['id']}/audio").json()) == 2
 
 
-def test_changed_pronunciation_invalidates_approval(client, monkeypatch):
+def test_audio_candidates_can_be_deleted_and_selected_audio_is_cleared(client, monkeypatch):
+    person = student(client)
+    selected = generate(client, monkeypatch, person)
+    other = generate(client, monkeypatch, person)
+    client.post(f"/api/students/{person['id']}/audio/{selected['id']}/approve")
+
+    unselected_delete = client.delete(f"/api/students/{person['id']}/audio/{other['id']}")
+    assert unselected_delete.status_code == 200
+    assert unselected_delete.json()["active_audio_id"] == selected["id"]
+    assert client.get(other["url"]).status_code == 404
+
+    selected_delete = client.delete(f"/api/students/{person['id']}/audio/{selected['id']}")
+    assert selected_delete.status_code == 200
+    assert selected_delete.json()["active_audio_id"] is None
+    assert selected_delete.json()["pronunciation_status"] == "needs_review"
+    assert client.get(selected["url"]).status_code == 404
+
+
+def test_existing_recording_can_be_selected_after_detail_changes(client, monkeypatch):
     person = student(client)
     candidate = generate(client, monkeypatch, person)
     approve = f"/api/students/{person['id']}/audio/{candidate['id']}/approve"
     assert client.post(approve).status_code == 200
     changed = client.patch(f"/api/students/{person['id']}", json={
         "display_name": "Updated pronunciation", "pronunciation_status": "approved"})
-    assert changed.json()["pronunciation_status"] == "needs_review"
-    assert client.post(approve).status_code == 409
+    assert changed.json()["pronunciation_status"] == "approved"
+    assert client.post(approve).status_code == 200
     another = student(client, "008")
     assert client.post(f"/api/students/{another['id']}/audio/{candidate['id']}/approve").status_code == 404
 
@@ -158,6 +176,20 @@ def test_google_adapter_passes_voice_language_and_speed(monkeypatch):
     assert args["voice"].language_code == "vi-VN"
     assert args["audio_config"].speaking_rate == .85
     assert args["retry"] is None
+    client.transport.close.assert_called_once()
+
+
+def test_google_adapter_can_let_google_select_voice(monkeypatch):
+    from backend.app import google_speech
+    client = MagicMock()
+    client.synthesize_speech.return_value.audio_content = b"MP3"
+    monkeypatch.setattr(google_speech, "get_client", lambda: client)
+
+    assert google_speech.synthesize("Nguyễn", "vi-VN", "__auto__", 1.0) == b"MP3"
+
+    voice = client.synthesize_speech.call_args.kwargs["voice"]
+    assert voice.language_code == "vi-VN"
+    assert voice.name == ""
     client.transport.close.assert_called_once()
 
 

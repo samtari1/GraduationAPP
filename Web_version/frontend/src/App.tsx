@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import PronunciationTools from './PronunciationTools'
+import PronunciationTools, { languageDisplayName } from './PronunciationTools'
 import { api } from './api'
 import type { AuditEvent, Ceremony, CeremonyDetail, DashboardStats, Entry, Student } from './types'
 
@@ -219,9 +219,19 @@ function Students({ students, reload, setNotice }: { students: Student[]; reload
 
 function StudentModal({ student, close, reload, setNotice }: { student: Student | null; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', language: student?.language ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status ?? 'pending', notes: student?.notes ?? '' })
+  const [supportedLanguages, setSupportedLanguages] = useState<string[]>([])
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const dirty = !!student && Object.entries(form).some(([key, value]) => value !== (student[key as keyof Student] ?? ''))
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
+  useEffect(() => {
+    let active = true
+    api.get<string[]>('/api/speech/languages').then(result => {
+      if (!active) return
+      const sorted = result.slice().sort((a, b) => languageDisplayName(a).localeCompare(languageDisplayName(b)))
+      setSupportedLanguages(sorted)
+    }).catch(error => setNotice((error as Error).message))
+    return () => { active = false }
+  }, [student?.id])
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     try {
@@ -234,10 +244,10 @@ function StudentModal({ student, close, reload, setNotice }: { student: Student 
     } catch (error) { setNotice((error as Error).message) }
   }
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}><form className="modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">PRONUNCIATION RECORD</p><h2>{student ? 'Review student' : 'Add student'}</h2></div><button type="button" className="close" onClick={close}>×</button></div><div className="form-grid">
-    <label>Student ID<input required disabled={!!student} value={form.student_id} onChange={(e) => update('student_id', e.target.value)} /></label>
+    <label>Student ID<input required value={form.student_id} onChange={(e) => update('student_id', e.target.value)} /></label>
     <label>Display name<input required value={form.display_name} onChange={(e) => update('display_name', e.target.value)} /></label>
     <label>Native-language name<input dir="auto" value={form.native_name} onChange={(e) => update('native_name', e.target.value)} /></label>
-    <label>Language or regional variety<input value={form.language} placeholder="e.g. Vietnamese" onChange={(e) => update('language', e.target.value)} /></label>
+    <label>Language or regional variety<select value={form.language} onChange={(e) => update('language', e.target.value)}><option value="">Select a language</option>{form.language && !supportedLanguages.includes(form.language) && <option value={form.language}>{form.language} (existing value)</option>}{supportedLanguages.map(code => <option value={code} key={code}>{languageDisplayName(code)} · {code}</option>)}</select></label>
     <label className="wide">Phonetic guide<input value={form.phonetic_spelling} placeholder="e.g. ngwin meen ahn" onChange={(e) => update('phonetic_spelling', e.target.value)} /></label>
     <label>Program<input value={form.program} onChange={(e) => update('program', e.target.value)} /></label>
     <label>Status<select value={form.pronunciation_status} onChange={(e) => update('pronunciation_status', e.target.value)}><option value="pending">Pending</option><option value="needs_review">Needs review</option><option value="approved">Approved</option></select></label>
@@ -245,7 +255,7 @@ function StudentModal({ student, close, reload, setNotice }: { student: Student 
     <label className="wide upload-zone">Approved pronunciation audio<input type="file" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} /><span>{audioFile?.name ?? (student?.active_audio ? `Current: ${student.active_audio.original_filename}` : 'Choose an MP3, WAV, M4A, OGG, or WebM file')}</span></label>
     <label className="wide">Reviewer notes<textarea rows={3} value={form.notes} onChange={(e) => update('notes', e.target.value)} /></label>
   </div>
-  {student && <PronunciationTools student={student} dirty={dirty || !!audioFile} onApproved={async () => { await reload(); setNotice('Pronunciation selected for ceremony.'); close() }} />}
+  {student && <PronunciationTools student={student} dirty={dirty || !!audioFile} onChanged={async (updated, message) => { setForm(current => ({ ...current, pronunciation_status: updated.pronunciation_status })); await reload(); setNotice(message) }} />}
   <div className="modal-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary">Save record</button></div></form></div>
 }
 

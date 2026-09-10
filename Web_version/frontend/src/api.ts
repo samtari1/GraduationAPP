@@ -20,5 +20,6 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }).then(parse<T>),
+  delete: <T>(path: string) =>
+    fetch(path, { method: 'DELETE' }).then(parse<T>),
 }
-

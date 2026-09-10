@@ -125,14 +125,14 @@ def update_student(student_pk: int, payload: StudentUpdate, db: Session = Depend
     if not student:
         raise HTTPException(404, "Student not found")
     updates = payload.model_dump(exclude_unset=True)
-    audio_sensitive = {"display_name", "native_name", "language", "phonetic_spelling", "announcement_text"}
-    pronunciation_changed = any(getattr(student, key) != updates[key] for key in audio_sensitive.intersection(updates))
     for key, value in updates.items():
         setattr(student, key, value)
-    if pronunciation_changed and student.active_audio_id:
-        student.pronunciation_status = "needs_review"
     audit(db, "student.updated", f"Updated {student.display_name}", "student", student.id)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "A student with that student ID already exists")
     db.refresh(student)
     return serialize_student(student)
 
@@ -464,11 +464,13 @@ def generate_speech(student_pk: int, payload: SpeechRequest, db: Session = Depen
     content = google_speech.synthesize(payload.text, payload.language_code, payload.voice_name, payload.speaking_rate)
     filename = f"{student_pk}-{uuid.uuid4().hex}.mp3"
     destination = AUDIO_DIR / filename
+    voice_label = (f"Automatic ({payload.language_code})"
+                   if payload.voice_name == "__auto__" else payload.voice_name)
     try:
         destination.write_bytes(content)
         asset = AudioAsset(student_id=student_pk, filename=filename,
-                           original_filename=f"Google pronunciation ({payload.voice_name}).mp3",
-                           source="google-cloud", voice=payload.voice_name,
+                           original_filename=f"Google pronunciation ({voice_label}).mp3",
+                           source="google-cloud", voice=voice_label,
                            generation_input=json.dumps(metadata, ensure_ascii=False), approved=False)
         db.add(asset)
         db.flush()
@@ -489,15 +491,36 @@ def approve_audio(student_pk: int, audio_id: int, db: Session = Depends(get_db))
         raise HTTPException(404, "Student audio candidate not found")
     if not (AUDIO_DIR / asset.filename).is_file():
         raise HTTPException(409, "Audio file is missing. Upload or generate a new candidate.")
-    if asset.source == "google-cloud" and asset.generation_input:
-        snapshot = json.loads(asset.generation_input).get("student_snapshot")
-        if snapshot != pronunciation_snapshot(student):
-            raise HTTPException(409, "Pronunciation details changed since generation. Generate a new candidate first.")
     asset.approved = True
     student.active_audio = asset
     student.pronunciation_status = "approved"
     audit(db, "audio.approved", f"Selected audio candidate {audio_id} for {student.display_name}", "student", student.id)
     db.commit()
+    return serialize_student(student)
+
+
+@app.delete("/api/students/{student_pk}/audio/{audio_id}", response_model=StudentOut)
+def delete_audio(student_pk: int, audio_id: int, db: Session = Depends(get_db)):
+    student = db.scalar(student_query().where(Student.id == student_pk))
+    asset = db.get(AudioAsset, audio_id)
+    if not student or not asset or asset.student_id != student_pk:
+        raise HTTPException(404, "Student audio candidate not found")
+
+    path = AUDIO_DIR / asset.filename
+    was_selected = student.active_audio_id == asset.id
+    if was_selected:
+        student.active_audio = None
+        student.active_audio_id = None
+        student.pronunciation_status = "needs_review"
+    audit(db, "audio.deleted", f"Deleted audio candidate {audio_id} for {student.display_name}", "student", student.id)
+    db.delete(asset)
+    db.commit()
+    # The database is authoritative. A failed unlink leaves only an unreferenced
+    # local file and must not roll back the completed record deletion.
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        pass
     return serialize_student(student)
 
 

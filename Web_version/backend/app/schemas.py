@@ -43,6 +43,7 @@ class StudentCreate(StudentBase):
 
 
 class StudentUpdate(BaseModel):
+    student_id: Optional[str] = Field(default=None, min_length=1, max_length=80)
     display_name: Optional[str] = None
     native_name: Optional[str] = None
     language: Optional[str] = None
