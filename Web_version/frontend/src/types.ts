@@ -38,6 +38,7 @@ export type Entry = {
   id: number
   ceremony_id: number
   position: number
+  line_position: number | null
   status: string
   checked_in_at: string | null
   announced_at: string | null

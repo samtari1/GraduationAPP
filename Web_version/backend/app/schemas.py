@@ -106,6 +106,7 @@ class EntryOut(BaseModel):
     id: int
     ceremony_id: int
     position: int
+    line_position: Optional[int]
     status: str
     checked_in_at: Optional[datetime]
     announced_at: Optional[datetime]
@@ -129,6 +130,7 @@ class ScannerConnect(BaseModel):
     port: str = Field(min_length=1, max_length=255)
     baud: int = Field(default=9600, ge=300, le=921600)
     ceremony_id: int
+    mode: str = Field(default="stage", pattern="^(checkin|stage)$")
 
 
 class EntryAction(BaseModel):

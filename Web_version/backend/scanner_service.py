@@ -15,6 +15,7 @@ class SerialScannerService:
         self._serial = None
         self._status = {
             "connected": False, "port": None, "baud": None, "ceremony_id": None,
+            "mode": None,
             "scan_count": 0, "revision": 0, "last_entry_id": None,
             "last_student": None, "last_error": None,
         }
@@ -34,7 +35,7 @@ class SerialScannerService:
         with self._lock:
             return dict(self._status)
 
-    def connect(self, port: str, baud: int, ceremony_id: int, on_scan: Callable[[str], dict]):
+    def connect(self, port: str, baud: int, ceremony_id: int, mode: str, on_scan: Callable[[str], dict]):
         self.disconnect()
         try:
             import serial
@@ -46,6 +47,7 @@ class SerialScannerService:
             self._serial = scanner
             self._status.update({
                 "connected": True, "port": port, "baud": baud, "ceremony_id": ceremony_id,
+                "mode": mode,
                 "scan_count": 0, "last_entry_id": None, "last_student": None, "last_error": None,
             })
         self._thread = Thread(target=self._run, args=(scanner, on_scan), daemon=True, name="gradvoice-serial-scanner")
@@ -96,6 +98,7 @@ class SerialScannerService:
             self._serial = None
             self._thread = None
             self._status["connected"] = False
+            self._status["mode"] = None
         if scanner is not None:
             try:
                 scanner.close()

@@ -78,6 +78,7 @@ class CeremonyEntry(Base):
     ceremony_id: Mapped[int] = mapped_column(ForeignKey("ceremonies.id", ondelete="CASCADE"), index=True)
     student_id: Mapped[int] = mapped_column(ForeignKey("students.id"), index=True)
     position: Mapped[int] = mapped_column(Integer, default=0)
+    line_position: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     status: Mapped[str] = mapped_column(String(30), default="expected")
     checked_in_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     announced_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)

@@ -198,13 +198,28 @@ def test_check_in_can_be_undone_and_waiting_queue_reordered(client):
         f"/api/ceremonies/{ceremony['id']}/queue/reorder",
         json={"entry_ids": [reordered_ids[1], reordered_ids[0], reordered_ids[2]]},
     )
-    assert moving_current.status_code == 409
-
+    assert moving_current.status_code == 200
+    assert [entry["id"] for entry in moving_current.json()["entries"]] == [reordered_ids[1], reordered_ids[0], reordered_ids[2]]
     undone = client.post(f"/api/entries/{reordered_ids[2]}/action", json={"action": "reset"})
     assert undone.status_code == 200
     assert undone.json()["status"] == "expected"
     assert undone.json()["checked_in_at"] is None
 
+
+def test_stage_scan_requires_checkin_and_targets_the_scanned_student(client):
+    people = [student(client, f"20{index}", f"Graduate {index}") for index in range(2)]
+    ceremony = client.post("/api/ceremonies", json={"name": "Graduation", "event_date": "2027-05-01"}).json()
+    for person in people:
+        client.post(f"/api/ceremonies/{ceremony['id']}/students", json={"student_id": person["id"]})
+
+    rejected = client.post(f"/api/ceremonies/{ceremony['id']}/stage-scan", json={"token": people[0]["student_id"]})
+    assert rejected.status_code == 409
+    first = client.post(f"/api/ceremonies/{ceremony['id']}/scan", json={"token": people[1]["student_id"]}).json()
+    second = client.post(f"/api/ceremonies/{ceremony['id']}/scan", json={"token": people[0]["student_id"]}).json()
+    assert (first["line_position"], second["line_position"]) == (1, 2)
+    at_stage = client.post(f"/api/ceremonies/{ceremony['id']}/stage-scan", json={"token": people[0]["student_id"]})
+    assert at_stage.status_code == 200
+    assert at_stage.json()["status"] == "at_stage"
 
 def test_coworker_csv_and_qr_token(client, monkeypatch):
     import qrcode

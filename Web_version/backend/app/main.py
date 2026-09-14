@@ -13,7 +13,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
@@ -42,6 +42,9 @@ from .schemas import (
 
 
 Base.metadata.create_all(bind=engine)
+if "line_position" not in {column["name"] for column in inspect(engine).get_columns("ceremony_entries")}:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE ceremony_entries ADD COLUMN line_position INTEGER"))
 
 app = FastAPI(title="GradVoice", version="0.1.0")
 app.add_middleware(
@@ -376,10 +379,10 @@ async def import_ceremony_students(ceremony_id: int, file: UploadFile = File(...
 
 @app.post("/api/ceremonies/{ceremony_id}/scan", response_model=EntryOut)
 def scan_student(ceremony_id: int, payload: ScanRequest, db: Session = Depends(get_db)):
-    return process_scan(ceremony_id, payload.token, db)
+    return process_checkin(ceremony_id, payload.token, db)
 
 
-def process_scan(ceremony_id: int, raw_token: str, db: Session):
+def find_scanned_entry(ceremony_id: int, raw_token: str, db: Session):
     token = raw_token.strip()
     student = db.scalar(select(Student).where(or_(Student.qr_token == token, Student.student_id == token)))
     if not student:
@@ -391,18 +394,57 @@ def process_scan(ceremony_id: int, raw_token: str, db: Session):
     )
     if not entry:
         raise HTTPException(409, "Student is not assigned to this ceremony")
-    if entry.status == "announced":
-        raise HTTPException(409, "Student has already been announced")
-    if entry.status not in {"checked_in", "queued"}:
-        entry.status = "checked_in"
-        entry.checked_in_at = utcnow()
-        audit(db, "ceremony.scanned", f"Checked in {student.display_name}", "ceremony_entry", entry.id)
-    db.commit()
-    db.refresh(entry)
+    return entry
+
+
+def serialize_entry(entry: CeremonyEntry):
     result = EntryOut.model_validate(entry)
     if result.student.active_audio:
         result.student.active_audio.url = f"/media/{result.student.active_audio.filename}"
     return result
+
+
+def process_checkin(ceremony_id: int, raw_token: str, db: Session):
+    entry = find_scanned_entry(ceremony_id, raw_token, db)
+    student = entry.student
+    if entry.status == "announced":
+        raise HTTPException(409, "Student has already been announced")
+    if entry.status not in {"checked_in", "queued", "at_stage"}:
+        entry.status = "checked_in"
+        entry.checked_in_at = utcnow()
+        entry.line_position = (db.scalar(select(func.max(CeremonyEntry.line_position)).where(
+            CeremonyEntry.ceremony_id == ceremony_id
+        )) or 0) + 1
+        audit(db, "ceremony.scanned", f"Checked in {student.display_name}", "ceremony_entry", entry.id)
+    db.commit()
+    db.refresh(entry)
+    return serialize_entry(entry)
+
+
+@app.post("/api/ceremonies/{ceremony_id}/stage-scan", response_model=EntryOut)
+def stage_scan_student(ceremony_id: int, payload: ScanRequest, db: Session = Depends(get_db)):
+    return process_stage_scan(ceremony_id, payload.token, db)
+
+
+def process_stage_scan(ceremony_id: int, raw_token: str, db: Session):
+    entry = find_scanned_entry(ceremony_id, raw_token, db)
+    if entry.status == "announced":
+        raise HTTPException(409, "Student has already been announced")
+    if entry.status not in {"checked_in", "at_stage"}:
+        raise HTTPException(409, "Student has not checked in yet")
+    current = db.scalar(select(CeremonyEntry).where(
+        CeremonyEntry.ceremony_id == ceremony_id,
+        CeremonyEntry.status == "at_stage",
+        CeremonyEntry.id != entry.id,
+    ))
+    if current:
+        raise HTTPException(409, "Finish or undo the student currently at the stage first")
+    if entry.status != "at_stage":
+        entry.status = "at_stage"
+        audit(db, "ceremony.stage_scanned", f"At stage: {entry.student.display_name}", "ceremony_entry", entry.id)
+    db.commit()
+    db.refresh(entry)
+    return serialize_entry(entry)
 
 
 @app.get("/api/scanner/ports")
@@ -426,10 +468,11 @@ def scanner_connect(payload: ScannerConnect, db: Session = Depends(get_db)):
 
     def handle(token: str):
         with SessionLocal() as scanner_db:
-            return process_scan(payload.ceremony_id, token, scanner_db).model_dump(mode="json")
+            processor = process_checkin if payload.mode == "checkin" else process_stage_scan
+            return processor(payload.ceremony_id, token, scanner_db).model_dump(mode="json")
 
     try:
-        return scanner_service.connect(payload.port, payload.baud, payload.ceremony_id, handle)
+        return scanner_service.connect(payload.port, payload.baud, payload.ceremony_id, payload.mode, handle)
     except Exception as error:
         raise HTTPException(409, f"Could not open serial scanner: {error}")
 
@@ -449,23 +492,21 @@ def reorder_queue(ceremony_id: int, payload: QueueReorder, db: Session = Depends
     ceremony = ceremony_detail(db, ceremony_id)
     active = sorted(
         (entry for entry in ceremony.entries if entry.status in {"checked_in", "queued"}),
-        key=lambda entry: entry.position,
+        key=lambda entry: entry.line_position or 0,
     )
     active_ids = [entry.id for entry in active]
     if len(payload.entry_ids) != len(set(payload.entry_ids)):
         raise HTTPException(422, "Queue order contains a duplicate entry")
     if set(payload.entry_ids) != set(active_ids):
         raise HTTPException(409, "The queue changed. Refresh and try reordering again.")
-    if active_ids and payload.entry_ids[0] != active_ids[0]:
-        raise HTTPException(409, "The student currently at the stage cannot be moved")
-
-    positions = sorted(entry.position for entry in active)
     entries_by_id = {entry.id: entry for entry in active}
-    for position, entry_id in zip(positions, payload.entry_ids):
-        entries_by_id[entry_id].position = position
+    for position, entry_id in enumerate(payload.entry_ids, start=1):
+        entries_by_id[entry_id].line_position = position
     audit(db, "ceremony.queue_reordered", "Reordered the waiting announcement queue", "ceremony", ceremony_id)
     db.commit()
-    return serialize_detail(ceremony_detail(db, ceremony_id))
+    result = serialize_detail(ceremony_detail(db, ceremony_id))
+    result.entries.sort(key=lambda entry: entry.line_position if entry.line_position is not None else 10**9)
+    return result
 
 
 @app.post("/api/entries/{entry_id}/action", response_model=EntryOut)
@@ -498,6 +539,7 @@ def entry_action(entry_id: int, payload: EntryAction, db: Session = Depends(get_
         entry.status = "skipped"
     else:
         entry.status = "expected"
+        entry.line_position = None
         entry.checked_in_at = None
         entry.announced_at = None
         entry.play_count = 0
