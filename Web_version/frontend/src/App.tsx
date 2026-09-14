@@ -340,6 +340,7 @@ function CheckIn({ ceremonyId, setNotice }: { ceremonyId: number | null; setNoti
   const [busy, setBusy] = useState(false)
   const handledScannerRevision = useRef<number | null>(null)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const switchingMode = useRef(false)
   const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(setCeremony).catch(e => setNotice(e.message)) : Promise.resolve(), [ceremonyId, setNotice])
   useEffect(() => {
     let stopped = false; let timer: ReturnType<typeof setTimeout>
@@ -369,6 +370,15 @@ function CheckIn({ ceremonyId, setNotice }: { ceremonyId: number | null; setNoti
   const undo = async (entry: Entry) => { try { await api.post(`/api/entries/${entry.id}/action`, { action: 'reset' }); setNotice(`${entry.student.display_name}'s check-in was undone.`); await load() } catch (e) { setNotice((e as Error).message) } }
   const waiting = ceremony?.entries.filter(e => ['checked_in', 'at_stage'].includes(e.status)).sort((a,b) => (a.line_position ?? 0) - (b.line_position ?? 0)) ?? []
   const scannerReady = status?.connected && status.mode === 'checkin' && status.ceremony_id === ceremonyId
+  useEffect(() => {
+    if (!status?.connected || scannerReady || !status.port || !ceremonyId || switchingMode.current) return
+    switchingMode.current = true
+    setBusy(true)
+    api.post<ScannerStatus>('/api/scanner/connect', { port: status.port, baud: 9600, ceremony_id: ceremonyId, mode: 'checkin' })
+      .then(next => { handledScannerRevision.current = next.revision; setStatus(next); setNotice('Scanner automatically switched to check-in mode.') })
+      .catch(error => setNotice(`Could not switch scanner to check-in mode: ${error.message}`))
+      .finally(() => { switchingMode.current = false; setBusy(false) })
+  }, [status?.connected, status?.mode, status?.ceremony_id, status?.port, scannerReady, ceremonyId, setNotice])
   useEffect(() => {
     if (!status) return
     if (handledScannerRevision.current === null) {
@@ -408,8 +418,10 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
   const [scannerStatus, setScannerStatus] = useState<ScannerStatus | null>(null)
   const [scannerBusy, setScannerBusy] = useState(false)
   const [autoAnnounce, setAutoAnnounce] = useState(true)
+  const [lastStageEntryId, setLastStageEntryId] = useState<number | null>(null)
   const handledScannerRevision = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const switchingMode = useRef(false)
   const [connected, setConnected] = useState(false)
   const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(value => { setCeremony(value); setConnected(true) }).catch((e) => { setConnected(false); setNotice(e.message) }) : Promise.resolve(), [ceremonyId, setNotice])
   useEffect(() => {
@@ -450,21 +462,33 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
   }
   const activeQueue = ceremony?.entries.filter((entry) => entry.status === 'checked_in').sort((a,b) => (a.line_position ?? 0) - (b.line_position ?? 0)) ?? []
   const stageScannerReady = scannerStatus?.connected && scannerStatus.mode === 'stage' && scannerStatus.ceremony_id === ceremonyId
-  const current = ceremony?.entries.find(entry => entry.status === 'at_stage')
+  useEffect(() => {
+    if (!scannerStatus?.connected || stageScannerReady || !scannerStatus.port || !ceremonyId || switchingMode.current) return
+    switchingMode.current = true
+    setScannerBusy(true)
+    api.post<ScannerStatus>('/api/scanner/connect', { port: scannerStatus.port, baud: 9600, ceremony_id: ceremonyId, mode: 'stage' })
+      .then(next => { handledScannerRevision.current = next.revision; setScannerStatus(next); setNotice('Scanner automatically switched to stage mode.') })
+      .catch(error => setNotice(`Could not switch scanner to stage mode: ${error.message}`))
+      .finally(() => { switchingMode.current = false; setScannerBusy(false) })
+  }, [scannerStatus?.connected, scannerStatus?.mode, scannerStatus?.ceremony_id, scannerStatus?.port, stageScannerReady, ceremonyId, setNotice])
+  const activeAtStage = ceremony?.entries.find(entry => entry.status === 'at_stage')
+  const current = activeAtStage ?? ceremony?.entries.find(entry => entry.id === lastStageEntryId)
   const nextWaiting = activeQueue[0]
   const visibleRoster = ceremony?.entries.filter((entry) => {
     const query = rosterSearch.trim().toLocaleLowerCase()
     return !query || entry.student.display_name.toLocaleLowerCase().includes(query) || entry.student.student_id.toLocaleLowerCase().includes(query) || entry.student.program.toLocaleLowerCase().includes(query)
   }).sort((a,b) => a.position - b.position) ?? []
-  const scanned = async (event: React.FormEvent) => { event.preventDefault(); if (!ceremonyId || !scan.trim()) return; try { await api.post(`/api/ceremonies/${ceremonyId}/stage-scan`, { token: scan }); setScan(''); await load() } catch (e) { setNotice((e as Error).message) } }
+  const scanned = async (event: React.FormEvent) => { event.preventDefault(); if (!ceremonyId || !scan.trim()) return; try { const entry = await api.post<Entry>(`/api/ceremonies/${ceremonyId}/stage-scan`, { token: scan }); setLastStageEntryId(entry.id); setScan(''); await load(); if (autoAnnounce) await action(entry, 'announce') } catch (e) { setNotice((e as Error).message) } }
   const bringToStage = async (entry: Entry) => {
     if (!ceremonyId) return
     try {
-      await api.post(`/api/ceremonies/${ceremonyId}/stage-scan`, { token: entry.student.student_id })
+      const staged = await api.post<Entry>(`/api/ceremonies/${ceremonyId}/stage-scan`, { token: entry.student.student_id })
+      setLastStageEntryId(staged.id)
       await load()
+      if (autoAnnounce) await action(staged, 'announce')
     } catch (e) { setNotice((e as Error).message) }
   }
-  const undoCheckIn = async (entry: Entry) => action(entry, 'reset')
+  const undoCheckIn = async (entry: Entry) => { if (lastStageEntryId === entry.id) setLastStageEntryId(null); await action(entry, 'reset') }
   const reorderQueue = async (sourceId: number, targetId: number) => {
     if (!ceremonyId || sourceId === targetId) return
     const entryIds = activeQueue.map((entry) => entry.id)
@@ -507,32 +531,35 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
       setNotice(`Scanner: ${scannerStatus.last_error}`)
       return
     }
-    if (!scannerStatus.last_entry_id || !ceremony || scannerStatus.ceremony_id !== ceremonyId || scannerStatus.mode !== 'stage') return
-    const scannedEntry = ceremony.entries.find(entry => entry.id === scannerStatus.last_entry_id)
-    if (!scannedEntry) return
-    handledScannerRevision.current = scannerStatus.revision
-    if (!autoAnnounce) {
-      setNotice(`${scannedEntry.student.display_name} is ready at the stage.`)
-      return
-    }
-    void action(scannedEntry, 'announce')
-  }, [scannerStatus?.revision, ceremony, autoAnnounce, ceremonyId])
+    if (!scannerStatus.last_entry_id || scannerStatus.ceremony_id !== ceremonyId || scannerStatus.mode !== 'stage' || !ceremonyId) return
+    const revision = scannerStatus.revision
+    const entryId = scannerStatus.last_entry_id
+    void api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(async latest => {
+      const scannedEntry = latest.entries.find(entry => entry.id === entryId)
+      if (!scannedEntry || scannedEntry.status !== 'at_stage') return
+      handledScannerRevision.current = revision
+      setLastStageEntryId(scannedEntry.id)
+      setCeremony(latest)
+      if (autoAnnounce) await action(scannedEntry, 'announce')
+      else setNotice(`${scannedEntry.student.display_name} is ready at the stage.`)
+    }).catch(error => setNotice(error.message))
+  }, [scannerStatus?.revision, autoAnnounce, ceremonyId])
   if (!ceremonyId) return <div className="empty-state tall"><span>▶</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
   return <>
     <div className="stage-heading"><div><p className="eyebrow">LIVE CEREMONY MODE · CEREMONY ID {ceremonyId}</p><h2>{ceremony?.name ?? 'Loading…'}</h2></div><div className="stage-status">{connected ? 'Local server connected' : 'Local server disconnected'}</div></div>
     <section className={`panel scanner-panel${scannerStatus?.connected && !stageScannerReady ? ' scanner-wrong-mode' : ''}`}><div><p className="eyebrow">SERIAL QR SCANNER · STAGE MODE</p><strong>{stageScannerReady ? `Ready for stage scans · ${scannerStatus.port}` : scannerStatus?.connected ? `Scanner is currently in ${scannerStatus.mode} mode` : 'Scanner disconnected'}</strong>{scannerStatus?.connected && !stageScannerReady && <small>Switch it to stage mode before the graduate scans.</small>}{stageScannerReady && scannerStatus?.last_student && <small>Last student: {scannerStatus.last_student}</small>}</div><select aria-label="Serial scanner port" value={scannerStatus?.connected ? scannerStatus.port ?? '' : serialPort} disabled={scannerBusy || !!scannerStatus?.connected} onChange={event => setSerialPort(event.target.value)}><option value="">Select serial port</option>{serialPorts.map(port => <option value={port.device} key={port.device}>{port.description} · {port.device}</option>)}</select><button className="secondary" disabled={scannerBusy || !!scannerStatus?.connected} onClick={loadSerialPorts}>Refresh ports</button>{scannerStatus?.connected && !stageScannerReady ? <button className="primary" disabled={scannerBusy} onClick={connectScanner}>{scannerBusy ? 'Switching…' : 'Switch to stage mode'}</button> : scannerStatus?.connected ? <button className="danger-button" disabled={scannerBusy} onClick={disconnectScanner}>Disconnect</button> : <button className="primary" disabled={scannerBusy || !serialPort} onClick={connectScanner}>{scannerBusy ? 'Connecting…' : 'Connect scanner'}</button>}<label className="auto-announce"><input type="checkbox" checked={autoAnnounce} onChange={event => setAutoAnnounce(event.target.checked)} /> Automatically pronounce approved audio after stage scan</label></section>
-    <div className="stage-checkin-tools"><form className="scan-bar" onSubmit={scanned}><label><span>STAGE SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan the arriving graduate again" /></label><button className="primary">Bring to stage</button></form><button className="secondary next-student-button" disabled={!nextWaiting || !!current} onClick={() => nextWaiting && bringToStage(nextWaiting)}>Next in line{nextWaiting ? `: ${nextWaiting.student.display_name}` : ''}</button></div>
+    <div className="stage-checkin-tools"><form className="scan-bar" onSubmit={scanned}><label><span>STAGE SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan the arriving graduate again" /></label><button className="primary">Bring to stage</button></form><button className="secondary next-student-button" disabled={!nextWaiting || !!activeAtStage} onClick={() => nextWaiting && bringToStage(nextWaiting)}>Next in line{nextWaiting ? `: ${nextWaiting.student.display_name}` : ''}</button></div>
     <div className="stage-grid">
       <section className="now-card">
         <p className="eyebrow light">NOW AT THE STAGE</p>
-        {current ? <><span className="queue-number">#{current.position}</span><h3>{current.student.announcement_text || current.student.display_name}</h3>{current.student.native_name && <p className="native" dir="auto">{current.student.native_name}</p>}<p className="program">{current.student.program}</p><div className="phonetic"><small>PRONUNCIATION GUIDE</small><strong>{current.student.phonetic_spelling || 'No phonetic guide provided'}</strong></div><div className="stage-buttons"><button className="announce" disabled={!current.student.active_audio} onClick={() => action(current, 'announce')}>▶ Announce name</button><button onClick={() => action(current, 'skip')}>Skip</button><button onClick={() => undoCheckIn(current)}>Undo check-in</button></div>{!current.student.active_audio && <p className="audio-warning">Approved audio is missing. Use the pronunciation guide.</p>}</> : <div className="stage-empty"><span>✓</span><h3>Waiting for the next graduate</h3><p>Scan a student ID or choose someone from the roster.</p></div>}
+        {current ? <><span className="queue-number">Line #{current.line_position ?? current.position}</span><h3>{current.student.announcement_text || current.student.display_name}</h3>{current.student.native_name && <p className="native" dir="auto">{current.student.native_name}</p>}<p className="program">{current.student.program}</p><p className="program">Student ID {current.student.student_id}</p><div className="phonetic"><small>PRONUNCIATION GUIDE</small><strong>{current.student.phonetic_spelling || 'No phonetic guide provided'}</strong></div><div className="stage-buttons"><button className="announce" disabled={!current.student.active_audio} onClick={() => action(current, current.status === 'announced' ? 'replay' : 'announce')}>▶ {current.status === 'announced' ? 'Replay name' : 'Announce name'}</button>{current.status !== 'announced' && <button onClick={() => action(current, 'skip')}>Skip</button>}<button onClick={() => undoCheckIn(current)}>Undo</button></div>{!current.student.active_audio && <p className="audio-warning">Approved audio is missing. Use the pronunciation guide.</p>}</> : <div className="stage-empty"><span>✓</span><h3>Waiting for the next graduate</h3><p>Scan a student ID or choose someone from the roster.</p></div>}
       </section>
       <section className="panel queue-panel"><div className="panel-heading"><div><p className="eyebrow">UP NEXT</p><h3>Arrival line</h3><small>Check-in order is the default. Drag students or use the arrows to adjust it.</small></div><span>{activeQueue.length} waiting</span></div><div className="queue-list">{activeQueue.map((entry, index) => <div className={`queue-row draggable${draggedEntryId === entry.id ? ' dragging' : ''}`} draggable key={entry.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(entry.id)); setDraggedEntryId(entry.id) }} onDragEnd={() => setDraggedEntryId(null)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }} onDrop={(event) => { event.preventDefault(); const sourceId = Number(event.dataTransfer.getData('text/plain')) || draggedEntryId; if (sourceId) void reorderQueue(sourceId, entry.id) }}><span className="drag-handle" title="Drag to reorder">⠿</span><span>{entry.line_position}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-dot' : 'warning-dot'} /><span className="queue-move-buttons"><button className="text-button" disabled={index === 0} onClick={() => moveQueueEntry(entry.id, -1)} aria-label={`Move ${entry.student.display_name} earlier`}>↑</button><button className="text-button" disabled={index === activeQueue.length - 1} onClick={() => moveQueueEntry(entry.id, 1)} aria-label={`Move ${entry.student.display_name} later`}>↓</button></span><button className="text-button" onClick={() => undoCheckIn(entry)}>Undo</button></div>)}{!activeQueue.length && <p className="empty">Students checked in at the arrival station will appear here.</p>}</div><div className="all-status"><strong>Processional progress</strong><div className="progress"><span style={{ width: `${ceremony?.entries.length ? ((ceremony.entries.filter(e => e.status === 'announced').length / ceremony.entries.length) * 100) : 0}%` }} /></div><small>{ceremony?.entries.filter(e => e.status === 'announced').length ?? 0} of {ceremony?.entries.length ?? 0} announced</small></div></section>
     </div>
     <section className="panel stage-roster-panel">
       <div className="panel-heading"><div><p className="eyebrow">MANUAL FALLBACK</p><h3>Bring a checked-in student to stage</h3></div><label className="roster-search"><span>Search roster</span><input value={rosterSearch} onChange={(event) => setRosterSearch(event.target.value)} placeholder="Name, student ID, or program" /></label></div>
       <div className="stage-roster-list">
-        {visibleRoster.map((entry) => <div className="stage-roster-row" key={entry.id}><span className="roster-position">{entry.line_position ?? '—'}</span><div><strong>{entry.student.display_name}</strong><small>ID {entry.student.student_id} · {entry.student.program}</small></div><span className={`roster-status ${entry.status}`}>{statusLabel(entry.status)}</span>{entry.status === 'checked_in' ? <button className="secondary" disabled={!!current} onClick={() => bringToStage(entry)}>Bring to stage</button> : entry.status === 'at_stage' || entry.status === 'announced' ? <button className="secondary" onClick={() => undoCheckIn(entry)}>Undo</button> : <button className="secondary" disabled title="Student must check in at the arrival station first">Not checked in</button>}</div>)}
+        {visibleRoster.map((entry) => <div className="stage-roster-row" key={entry.id}><span className="roster-position">{entry.line_position ?? '—'}</span><div><strong>{entry.student.display_name}</strong><small>ID {entry.student.student_id} · {entry.student.program}</small></div><span className={`roster-status ${entry.status}`}>{statusLabel(entry.status)}</span>{entry.status === 'checked_in' ? <button className="secondary" disabled={!!activeAtStage} onClick={() => bringToStage(entry)}>Bring to stage</button> : entry.status === 'at_stage' || entry.status === 'announced' ? <button className="secondary" onClick={() => undoCheckIn(entry)}>Undo</button> : <button className="secondary" disabled title="Student must check in at the arrival station first">Not checked in</button>}</div>)}
         {!visibleRoster.length && <p className="empty">No roster entries match your search.</p>}
       </div>
     </section>
