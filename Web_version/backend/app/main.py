@@ -17,9 +17,10 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
-from .database import AUDIO_DIR, BACKUP_DIR, Base, DATA_DIR, engine, get_db
+from .database import AUDIO_DIR, BACKUP_DIR, Base, DATA_DIR, SessionLocal, engine, get_db
 from .models import AudioAsset, AuditEvent, Ceremony, CeremonyEntry, Student
 from . import google_speech
+from ..scanner_service import scanner_service
 from .schemas import (
     AssignStudent,
     AuditOut,
@@ -31,6 +32,7 @@ from .schemas import (
     EntryOut,
     QueueReorder,
     ScanRequest,
+    ScannerConnect,
     StudentCreate,
     StudentOut,
     StudentUpdate,
@@ -374,7 +376,11 @@ async def import_ceremony_students(ceremony_id: int, file: UploadFile = File(...
 
 @app.post("/api/ceremonies/{ceremony_id}/scan", response_model=EntryOut)
 def scan_student(ceremony_id: int, payload: ScanRequest, db: Session = Depends(get_db)):
-    token = payload.token.strip()
+    return process_scan(ceremony_id, payload.token, db)
+
+
+def process_scan(ceremony_id: int, raw_token: str, db: Session):
+    token = raw_token.strip()
     student = db.scalar(select(Student).where(or_(Student.qr_token == token, Student.student_id == token)))
     if not student:
         raise HTTPException(404, "No student matches that scan")
@@ -397,6 +403,45 @@ def scan_student(ceremony_id: int, payload: ScanRequest, db: Session = Depends(g
     if result.student.active_audio:
         result.student.active_audio.url = f"/media/{result.student.active_audio.filename}"
     return result
+
+
+@app.get("/api/scanner/ports")
+def scanner_ports():
+    try:
+        return scanner_service.ports()
+    except RuntimeError as error:
+        raise HTTPException(503, str(error))
+
+
+@app.get("/api/scanner/status")
+def scanner_status():
+    return scanner_service.status()
+
+
+@app.post("/api/scanner/connect")
+def scanner_connect(payload: ScannerConnect, db: Session = Depends(get_db)):
+    ceremony = db.get(Ceremony, payload.ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+
+    def handle(token: str):
+        with SessionLocal() as scanner_db:
+            return process_scan(payload.ceremony_id, token, scanner_db).model_dump(mode="json")
+
+    try:
+        return scanner_service.connect(payload.port, payload.baud, payload.ceremony_id, handle)
+    except Exception as error:
+        raise HTTPException(409, f"Could not open serial scanner: {error}")
+
+
+@app.post("/api/scanner/disconnect")
+def scanner_disconnect():
+    return scanner_service.disconnect()
+
+
+@app.on_event("shutdown")
+def stop_serial_scanner():
+    scanner_service.disconnect()
 
 
 @app.post("/api/ceremonies/{ceremony_id}/queue/reorder", response_model=CeremonyDetail)

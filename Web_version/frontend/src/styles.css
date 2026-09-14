@@ -15,6 +15,7 @@
 .modal-error { margin: 14px 0 0; padding: 10px 12px; border-radius: 6px; background: #fff0e9; color: #9a4035; font-size: 13px; }
 .panel-heading-actions { display: flex; gap: 8px; align-items: center; }
 .ceremony-students-heading { margin-top: 30px; }
+.scanner-panel { display: grid; grid-template-columns: minmax(190px,1fr) minmax(280px,1.4fr) auto auto; gap: 10px; align-items: center; padding: 14px 16px; margin-bottom: 14px; }.scanner-panel>div strong,.scanner-panel>div small { display: block; }.scanner-panel>div small { color: #66736f; margin-top: 4px; }.scanner-panel select { min-width: 0; padding: 10px; border: 1px solid #ddd8cc; border-radius: 6px; }.auto-announce { grid-column: 2 / -1; display: flex; gap: 8px; align-items: center; color: #52615d; font-size: 12px; }.auto-announce input { width: auto; }
 .csv-format-note { display: block; max-width: 760px; margin-top: 8px; color: #818a88; font-size: 11px; line-height: 1.5; }
 .studio-message { padding: 10px; background: #fff0cf; border-radius: 5px; }
 button:disabled { cursor: not-allowed; opacity: .55; }

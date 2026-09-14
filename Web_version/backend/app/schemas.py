@@ -125,6 +125,12 @@ class ScanRequest(BaseModel):
     token: str
 
 
+class ScannerConnect(BaseModel):
+    port: str = Field(min_length=1, max_length=255)
+    baud: int = Field(default=9600, ge=300, le=921600)
+    ceremony_id: int
+
+
 class EntryAction(BaseModel):
     action: str
 

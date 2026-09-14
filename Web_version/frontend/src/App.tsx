@@ -326,20 +326,56 @@ function Ceremonies({ ceremonies, selectedCeremonyId, reload, setSelected, setNo
 }
 
 function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; setNotice: (value: string) => void }) {
+  type SerialPort = { device: string; description: string; manufacturer?: string | null }
+  type ScannerStatus = { connected: boolean; port: string | null; baud: number | null; ceremony_id: number | null; scan_count: number; revision: number; last_entry_id: number | null; last_student: string | null; last_error: string | null }
   const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null)
   const [scan, setScan] = useState('')
   const [rosterSearch, setRosterSearch] = useState('')
   const [draggedEntryId, setDraggedEntryId] = useState<number | null>(null)
+  const [serialPorts, setSerialPorts] = useState<SerialPort[]>([])
+  const [serialPort, setSerialPort] = useState('')
+  const [scannerStatus, setScannerStatus] = useState<ScannerStatus | null>(null)
+  const [scannerBusy, setScannerBusy] = useState(false)
+  const [autoAnnounce, setAutoAnnounce] = useState(true)
+  const handledScannerRevision = useRef(0)
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const [connected, setConnected] = useState(false)
   const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(value => { setCeremony(value); setConnected(true) }).catch((e) => { setConnected(false); setNotice(e.message) }) : Promise.resolve(), [ceremonyId, setNotice])
   useEffect(() => {
     let stopped = false
     let timer: ReturnType<typeof setTimeout>
-    const poll = async () => { await load(); if (!stopped) timer = setTimeout(poll, 2000) }
+    const poll = async () => {
+      await Promise.all([load(), api.get<ScannerStatus>('/api/scanner/status').then(setScannerStatus).catch(() => undefined)])
+      if (!stopped) timer = setTimeout(poll, 750)
+    }
     void poll()
     return () => { stopped = true; clearTimeout(timer) }
   }, [load])
+  const loadSerialPorts = async () => {
+    try {
+      const ports = await api.get<SerialPort[]>('/api/scanner/ports')
+      setSerialPorts(ports)
+      setSerialPort(current => current || ports[0]?.device || '')
+      if (!ports.length) setNotice('No serial scanner ports were detected.')
+    } catch (e) { setNotice((e as Error).message) }
+  }
+  useEffect(() => { void loadSerialPorts() }, [])
+  const connectScanner = async () => {
+    if (!ceremonyId || !serialPort) return
+    setScannerBusy(true)
+    try {
+      const status = await api.post<ScannerStatus>('/api/scanner/connect', { port: serialPort, baud: 9600, ceremony_id: ceremonyId })
+      handledScannerRevision.current = status.revision
+      setScannerStatus(status); setNotice(`Serial scanner connected on ${serialPort}.`)
+    } catch (e) { setNotice((e as Error).message) }
+    finally { setScannerBusy(false) }
+  }
+  const disconnectScanner = async () => {
+    setScannerBusy(true)
+    try { setScannerStatus(await api.post<ScannerStatus>('/api/scanner/disconnect')); setNotice('Serial scanner disconnected.') }
+    catch (e) { setNotice((e as Error).message) }
+    finally { setScannerBusy(false) }
+  }
   const activeQueue = ceremony?.entries.filter((entry) => ['checked_in', 'queued'].includes(entry.status)).sort((a,b) => a.position - b.position) ?? []
   const current = activeQueue[0]
   const nextExpected = ceremony?.entries.slice().sort((a,b) => a.position - b.position).find((entry) => entry.status === 'expected')
@@ -391,9 +427,31 @@ function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; se
       await load()
     } catch (e) { setNotice((e as Error).message) }
   }
+  useEffect(() => {
+    if (!scannerStatus || scannerStatus.revision <= handledScannerRevision.current) return
+    if (scannerStatus.last_error) {
+      handledScannerRevision.current = scannerStatus.revision
+      setNotice(`Scanner: ${scannerStatus.last_error}`)
+      return
+    }
+    if (!scannerStatus.last_entry_id || !ceremony || scannerStatus.ceremony_id !== ceremonyId) return
+    const scannedEntry = ceremony.entries.find(entry => entry.id === scannerStatus.last_entry_id)
+    if (!scannedEntry) return
+    handledScannerRevision.current = scannerStatus.revision
+    if (!autoAnnounce) {
+      setNotice(`${scannedEntry.student.display_name} checked in from the serial scanner.`)
+      return
+    }
+    if (activeQueue[0]?.id !== scannedEntry.id) {
+      setNotice(`${scannedEntry.student.display_name} was added to the queue.`)
+      return
+    }
+    void action(scannedEntry, 'announce')
+  }, [scannerStatus?.revision, ceremony, autoAnnounce, ceremonyId])
   if (!ceremonyId) return <div className="empty-state tall"><span>▶</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
   return <>
     <div className="stage-heading"><div><p className="eyebrow">LIVE CEREMONY MODE · CEREMONY ID {ceremonyId}</p><h2>{ceremony?.name ?? 'Loading…'}</h2></div><div className="stage-status">{connected ? 'Local server connected' : 'Local server disconnected'}</div></div>
+    <section className="panel scanner-panel"><div><p className="eyebrow">SERIAL QR SCANNER</p><strong>{scannerStatus?.connected ? `Connected · ${scannerStatus.port}` : 'Scanner disconnected'}</strong>{scannerStatus?.last_student && <small>Last scan: {scannerStatus.last_student}</small>}</div><select aria-label="Serial scanner port" value={scannerStatus?.connected ? scannerStatus.port ?? '' : serialPort} disabled={scannerBusy || !!scannerStatus?.connected} onChange={event => setSerialPort(event.target.value)}><option value="">Select serial port</option>{serialPorts.map(port => <option value={port.device} key={port.device}>{port.description} · {port.device}</option>)}</select><button className="secondary" disabled={scannerBusy || !!scannerStatus?.connected} onClick={loadSerialPorts}>Refresh ports</button>{scannerStatus?.connected ? <button className="danger-button" disabled={scannerBusy} onClick={disconnectScanner}>Disconnect</button> : <button className="primary" disabled={scannerBusy || !serialPort} onClick={connectScanner}>{scannerBusy ? 'Connecting…' : 'Connect scanner'}</button>}<label className="auto-announce"><input type="checkbox" checked={autoAnnounce} onChange={event => setAutoAnnounce(event.target.checked)} /> Automatically pronounce approved audio after scan</label></section>
     <div className="stage-checkin-tools"><form className="scan-bar" onSubmit={scanned}><label><span>SCAN</span><input autoFocus value={scan} onChange={(e) => setScan(e.target.value)} placeholder="Scan QR code, swipe card, or enter student ID" /></label><button className="primary">Check in</button></form><button className="secondary next-student-button" disabled={!nextExpected} onClick={() => nextExpected && manualCheckIn(nextExpected)}>Next student{nextExpected ? `: ${nextExpected.student.display_name}` : ''}</button></div>
     <div className="stage-grid">
       <section className="now-card">

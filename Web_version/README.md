@@ -112,7 +112,11 @@ Open a student's QR image from their review dialog under **Ceremonies**, or sele
 
 **Keyboard-style USB scanner:** Focus the Stage control scan box and configure the scanner to send Enter after each scan. Without hardware, type a student ID and press Enter.
 
-**Serial scanner:** The coworker's device communicates over a serial port at 9600 baud. Run this bridge on the same computer as FastAPI, with the ceremony ID displayed on Stage control:
+**Serial scanner:** Open **Stage control**, choose the detected serial device, leave **Automatically pronounce approved audio after scan** enabled, and click **Connect scanner**. The backend reads CR, LF, and CRLF-terminated QR values at 9600 baud. A successful scan checks in the matching student, displays their profile, and plays their selected local pronunciation. Unknown students, students from another ceremony, and missing/unapproved audio are reported without changing other records.
+
+The detected `SCAN CDC` device on macOS commonly appears as `/dev/cu.usbmodemA_000001`. Use **Refresh ports** after plugging in a scanner. Disconnect it in Stage Control before unplugging it.
+
+The standalone bridge remains available as a diagnostic fallback:
 
 ```bash
 python -m backend.scanner_bridge --list-ports

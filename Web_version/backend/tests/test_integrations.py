@@ -93,7 +93,29 @@ def test_ceremony_can_be_deleted_without_deleting_students(client):
     assert deleted.status_code == 200
     assert deleted.json()["message"] == "Graduation deleted."
     assert client.get(f"/api/ceremonies/{ceremony['id']}").status_code == 404
-    assert client.get(f"/api/students/{person['id']}").status_code == 200
+    assert any(item["id"] == person["id"] for item in client.get("/api/students").json())
+
+
+def test_serial_scanner_control_endpoints(client, monkeypatch):
+    from backend.app import main
+
+    monkeypatch.setattr(main.scanner_service, "ports", lambda: [
+        {"device": "/dev/cu.test", "description": "Test scanner", "manufacturer": "Test"}
+    ])
+    assert client.get("/api/scanner/ports").json()[0]["device"] == "/dev/cu.test"
+
+    ceremony = client.post("/api/ceremonies", json={"name": "Graduation", "event_date": "2027-05-01"}).json()
+    connected = {
+        "connected": True, "port": "/dev/cu.test", "baud": 9600,
+        "ceremony_id": ceremony["id"], "scan_count": 0, "revision": 0,
+        "last_entry_id": None, "last_student": None, "last_error": None,
+    }
+    monkeypatch.setattr(main.scanner_service, "connect", lambda *args: connected)
+    response = client.post("/api/scanner/connect", json={
+        "port": "/dev/cu.test", "baud": 9600, "ceremony_id": ceremony["id"]
+    })
+    assert response.status_code == 200
+    assert response.json()["connected"] is True
 
 
 def test_students_are_created_and_imported_inside_one_ceremony(client):
