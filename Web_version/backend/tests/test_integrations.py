@@ -67,6 +67,66 @@ def test_audio_candidates_can_be_deleted_and_selected_audio_is_cleared(client, m
     assert client.get(selected["url"]).status_code == 404
 
 
+def test_ceremony_information_can_be_updated_without_changing_roster(client):
+    person = student(client)
+    ceremony = client.post("/api/ceremonies", json={"name": "Old name", "event_date": "2027-05-01"}).json()
+    client.post(f"/api/ceremonies/{ceremony['id']}/students", json={"student_id": person["id"]})
+
+    updated = client.patch(f"/api/ceremonies/{ceremony['id']}", json={
+        "name": "Spring Graduation", "event_date": "2027-05-08", "location": "Auditorium"
+    })
+
+    assert updated.status_code == 200
+    assert updated.json()["name"] == "Spring Graduation"
+    assert updated.json()["event_date"] == "2027-05-08"
+    assert updated.json()["location"] == "Auditorium"
+    assert client.get(f"/api/ceremonies/{ceremony['id']}").json()["student_count"] == 1
+
+
+def test_ceremony_can_be_deleted_without_deleting_students(client):
+    person = student(client)
+    ceremony = client.post("/api/ceremonies", json={"name": "Graduation", "event_date": "2027-05-01"}).json()
+    client.post(f"/api/ceremonies/{ceremony['id']}/students", json={"student_id": person["id"]})
+
+    deleted = client.delete(f"/api/ceremonies/{ceremony['id']}")
+
+    assert deleted.status_code == 200
+    assert deleted.json()["message"] == "Graduation deleted."
+    assert client.get(f"/api/ceremonies/{ceremony['id']}").status_code == 404
+    assert client.get(f"/api/students/{person['id']}").status_code == 200
+
+
+def test_students_are_created_and_imported_inside_one_ceremony(client):
+    first = client.post("/api/ceremonies", json={"name": "Spring", "event_date": "2027-05-01"}).json()
+    second = client.post("/api/ceremonies", json={"name": "Fall", "event_date": "2027-12-01"}).json()
+    created = client.post(f"/api/ceremonies/{first['id']}/students/new", json={
+        "student_id": "C-001", "display_name": "Ceremony Student"
+    })
+    assert created.status_code == 201
+    assert client.get(f"/api/ceremonies/{first['id']}").json()["student_count"] == 1
+    assert client.get(f"/api/ceremonies/{second['id']}").json()["student_count"] == 0
+
+    assigned = client.post(f"/api/ceremonies/{second['id']}/students", json={
+        "student_id": created.json()["id"]
+    })
+    assert assigned.status_code == 200
+    assert assigned.json()["student_count"] == 1
+
+    duplicate = client.post(f"/api/ceremonies/{second['id']}/students", json={
+        "student_id": created.json()["id"]
+    })
+    assert duplicate.status_code == 409
+
+    csv = "student_id,display_name,language\nC-002,Imported Student,vi-VN\n"
+    imported = client.post(
+        f"/api/ceremonies/{first['id']}/students/import",
+        files={"file": ("roster.csv", csv.encode(), "text/csv")},
+    )
+    assert imported.status_code == 200
+    detail = client.get(f"/api/ceremonies/{first['id']}").json()
+    assert [entry["student"]["student_id"] for entry in detail["entries"]] == ["C-001", "C-002"]
+
+
 def test_existing_recording_can_be_selected_after_detail_changes(client, monkeypatch):
     person = student(client)
     candidate = generate(client, monkeypatch, person)

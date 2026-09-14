@@ -70,6 +70,12 @@ class CeremonyCreate(BaseModel):
     location: str = ""
 
 
+class CeremonyUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    event_date: Optional[str] = None
+    location: Optional[str] = None
+
+
 class CeremonyOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
     id: int

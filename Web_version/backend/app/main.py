@@ -26,6 +26,7 @@ from .schemas import (
     CeremonyCreate,
     CeremonyDetail,
     CeremonyOut,
+    CeremonyUpdate,
     EntryAction,
     EntryOut,
     QueueReorder,
@@ -238,6 +239,40 @@ def create_ceremony(payload: CeremonyCreate, db: Session = Depends(get_db)):
     return CeremonyOut.model_validate(ceremony)
 
 
+@app.patch("/api/ceremonies/{ceremony_id}", response_model=CeremonyOut)
+def update_ceremony(ceremony_id: int, payload: CeremonyUpdate, db: Session = Depends(get_db)):
+    ceremony = db.get(Ceremony, ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+    updates = payload.model_dump(exclude_unset=True)
+    if "name" in updates:
+        updates["name"] = updates["name"].strip()
+        if not updates["name"]:
+            raise HTTPException(422, "Ceremony name must not be blank")
+    if "event_date" in updates and not updates["event_date"].strip():
+        raise HTTPException(422, "Ceremony date must not be blank")
+    if "location" in updates:
+        updates["location"] = updates["location"].strip()
+    for key, value in updates.items():
+        setattr(ceremony, key, value)
+    audit(db, "ceremony.updated", f"Updated {ceremony.name}", "ceremony", ceremony.id)
+    db.commit()
+    db.refresh(ceremony)
+    return CeremonyOut.model_validate(ceremony).model_copy(update={"student_count": len(ceremony.entries)})
+
+
+@app.delete("/api/ceremonies/{ceremony_id}")
+def delete_ceremony(ceremony_id: int, db: Session = Depends(get_db)):
+    ceremony = db.get(Ceremony, ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+    ceremony_name = ceremony.name
+    db.delete(ceremony)
+    audit(db, "ceremony.deleted", f"Deleted {ceremony_name}", "ceremony", ceremony_id)
+    db.commit()
+    return {"message": f"{ceremony_name} deleted."}
+
+
 def ceremony_detail(db: Session, ceremony_id: int) -> Ceremony:
     ceremony = db.scalar(
         select(Ceremony)
@@ -283,6 +318,58 @@ def assign_student(ceremony_id: int, payload: AssignStudent, db: Session = Depen
     audit(db, "ceremony.student_assigned", f"Assigned {student.display_name} to {ceremony.name}", "ceremony", ceremony.id)
     db.commit()
     return serialize_detail(ceremony_detail(db, ceremony_id))
+
+
+@app.post("/api/ceremonies/{ceremony_id}/students/new", response_model=StudentOut, status_code=201)
+def create_ceremony_student(ceremony_id: int, payload: StudentCreate, db: Session = Depends(get_db)):
+    ceremony = db.get(Ceremony, ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+    values = payload.model_dump()
+    if not values["announcement_text"]:
+        values["announcement_text"] = values["display_name"]
+    student = Student(**values, qr_token=uuid.uuid4().hex)
+    db.add(student)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(409, "A student with that student ID already belongs to a ceremony")
+    next_position = (db.scalar(select(func.max(CeremonyEntry.position)).where(CeremonyEntry.ceremony_id == ceremony_id)) or 0) + 1
+    db.add(CeremonyEntry(ceremony_id=ceremony_id, student_id=student.id, position=next_position))
+    audit(db, "student.created", f"Added {student.display_name} to {ceremony.name}", "student", student.id)
+    db.commit()
+    return serialize_student(db.scalar(student_query().where(Student.id == student.id)))
+
+
+@app.post("/api/ceremonies/{ceremony_id}/students/import")
+async def import_ceremony_students(ceremony_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    ceremony = db.get(Ceremony, ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+    raw = await file.read()
+    try:
+        reader = csv.DictReader(io.StringIO(raw.decode("utf-8-sig")))
+        rows = list(reader)
+    except UnicodeDecodeError:
+        raise HTTPException(400, "CSV must use UTF-8 encoding")
+    coworker_format = {"StudentID", "FirstName", "LastName"}.issubset(set(reader.fieldnames or []))
+    student_ids = [(row.get("StudentID") if coworker_format else row.get("student_id") or "").strip() for row in rows]
+    await file.seek(0)
+    result = await import_students(file, db)
+    next_position = (db.scalar(select(func.max(CeremonyEntry.position)).where(CeremonyEntry.ceremony_id == ceremony_id)) or 0) + 1
+    for sid in student_ids:
+        if not sid:
+            continue
+        student = db.scalar(select(Student).where(Student.student_id == sid))
+        if student and not db.scalar(select(CeremonyEntry).where(
+            CeremonyEntry.ceremony_id == ceremony_id, CeremonyEntry.student_id == student.id
+        )):
+            db.add(CeremonyEntry(ceremony_id=ceremony_id, student_id=student.id, position=next_position))
+            next_position += 1
+    audit(db, "ceremony.students_imported", f"Imported roster into {ceremony.name}", "ceremony", ceremony_id)
+    db.commit()
+    return result
 
 
 @app.post("/api/ceremonies/{ceremony_id}/scan", response_model=EntryOut)

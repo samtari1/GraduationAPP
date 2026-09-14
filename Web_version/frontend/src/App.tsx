@@ -3,24 +3,23 @@ import PronunciationTools, { languageDisplayName } from './PronunciationTools'
 import { api } from './api'
 import type { AuditEvent, Ceremony, CeremonyDetail, DashboardStats, Entry, Student } from './types'
 
-type View = 'dashboard' | 'students' | 'ceremonies' | 'control'
+type View = 'dashboard' | 'ceremonies' | 'control'
 
 const navItems: { id: View; label: string; glyph: string }[] = [
   { id: 'dashboard', label: 'Overview', glyph: '▦' },
-  { id: 'students', label: 'Students', glyph: '◎' },
   { id: 'ceremonies', label: 'Ceremonies', glyph: '◇' },
   { id: 'control', label: 'Stage control', glyph: '▶' },
 ]
 
 const viewPaths: Record<View, string> = {
   dashboard: '/',
-  students: '/students',
   ceremonies: '/ceremonies',
   control: '/stage-control',
 }
 
 const viewFromPath = (pathname: string): View => {
   const normalized = pathname.replace(/\/+$/, '') || '/'
+  if (normalized === '/students') return 'ceremonies'
   const match = (Object.entries(viewPaths) as [View, string][]).find(([, path]) => path === normalized)
   return match?.[0] ?? 'dashboard'
 }
@@ -30,17 +29,12 @@ const statusLabel = (value: string) => value.replaceAll('_', ' ')
 function App() {
   const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname))
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('gradvoice.sidebarCollapsed') === 'true')
-  const [students, setStudents] = useState<Student[]>([])
   const [ceremonies, setCeremonies] = useState<Ceremony[]>([])
   const [selectedCeremonyId, setSelectedCeremonyId] = useState<number | null>(null)
   const [notice, setNotice] = useState<string>('')
 
   const loadCore = async () => {
-    const [studentData, ceremonyData] = await Promise.all([
-      api.get<Student[]>('/api/students'),
-      api.get<Ceremony[]>('/api/ceremonies'),
-    ])
-    setStudents(studentData)
+    const ceremonyData = await api.get<Ceremony[]>('/api/ceremonies')
     setCeremonies(ceremonyData)
     setSelectedCeremonyId((current) => current ?? ceremonyData[0]?.id ?? null)
   }
@@ -108,10 +102,7 @@ function App() {
       </aside>
       <main>
         <header className="topbar">
-          <div>
-            <p className="eyebrow">Sandhills Community College</p>
-            <h1>{navItems.find((item) => item.id === view)?.label}</h1>
-          </div>
+          <p className="eyebrow">Sandhills Community College</p>
           <div className="top-actions">
             <select
               aria-label="Active ceremony"
@@ -127,8 +118,7 @@ function App() {
         {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
         <div className="page">
           {view === 'dashboard' && <Dashboard onNavigate={navigate} selectedCeremonyId={selectedCeremonyId} />}
-          {view === 'students' && <Students students={students} reload={loadCore} setNotice={setNotice} />}
-          {view === 'ceremonies' && <Ceremonies ceremonies={ceremonies} students={students} reload={loadCore} setSelected={setSelectedCeremonyId} setNotice={setNotice} />}
+          {view === 'ceremonies' && <Ceremonies ceremonies={ceremonies} selectedCeremonyId={selectedCeremonyId} reload={loadCore} setSelected={setSelectedCeremonyId} setNotice={setNotice} />}
           {view === 'control' && <StageControl ceremonyId={selectedCeremonyId} setNotice={setNotice} />}
         </div>
       </main>
@@ -166,9 +156,9 @@ function Dashboard({ onNavigate, selectedCeremonyId }: { onNavigate: (view: View
       <section className="panel">
         <div className="panel-heading"><div><p className="eyebrow">WORKFLOW</p><h3>Preparation checklist</h3></div></div>
         <div className="checklist">
-          <button onClick={() => onNavigate('students')}><span>01</span><div><strong>Import the graduating class</strong><small>Upload CSV data and review validation results</small></div><b>→</b></button>
-          <button onClick={() => onNavigate('students')}><span>02</span><div><strong>Review every pronunciation</strong><small>Compare native spelling, phonetics, and audio</small></div><b>→</b></button>
-          <button onClick={() => onNavigate('ceremonies')}><span>03</span><div><strong>Build the ceremony order</strong><small>Assign students and check readiness</small></div><b>→</b></button>
+          <button onClick={() => onNavigate('ceremonies')}><span>01</span><div><strong>Create or select a ceremony</strong><small>Keep each graduating class in its own ceremony</small></div><b>→</b></button>
+          <button onClick={() => onNavigate('ceremonies')}><span>02</span><div><strong>Import and review graduates</strong><small>Manage names, languages, and audio within the ceremony</small></div><b>→</b></button>
+          <button onClick={() => onNavigate('ceremonies')}><span>03</span><div><strong>Confirm ceremony order</strong><small>Review the roster and readiness</small></div><b>→</b></button>
           <button onClick={() => onNavigate('control')}><span>04</span><div><strong>Rehearse stage controls</strong><small>Test scanning, queueing, and speaker output</small></div><b>→</b></button>
         </div>
       </section>
@@ -187,7 +177,7 @@ function Stat({ label, value, detail, tone = '' }: { label: string; value: strin
   return <article className={`stat-card ${tone}`}><p>{label}</p><strong>{value}</strong><small>{detail}</small></article>
 }
 
-function Students({ students, reload, setNotice }: { students: Student[]; reload: () => Promise<void>; setNotice: (value: string) => void }) {
+function Students({ ceremonyId, students, reload, setNotice }: { ceremonyId: number; students: Student[]; reload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [search, setSearch] = useState('')
   const [editing, setEditing] = useState<Student | null>(null)
   const [showAdd, setShowAdd] = useState(false)
@@ -198,26 +188,40 @@ function Students({ students, reload, setNotice }: { students: Student[]; reload
     if (!file) return
     const form = new FormData(); form.append('file', file)
     try {
-      const result = await api.post<{ created: number; updated: number; skipped: number }>('/api/students/import', form)
+      const result = await api.post<{ created: number; updated: number; skipped: number }>(`/api/ceremonies/${ceremonyId}/students/import`, form)
       setNotice(`Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.`)
       await reload()
     } catch (error) { setNotice((error as Error).message) }
     if (importRef.current) importRef.current.value = ''
   }
 
+  const exportCsv = () => {
+    const headers = ['student_id', 'display_name', 'native_name', 'language', 'phonetic_spelling', 'program', 'announcement_text']
+    const escapeCsv = (value: string | null) => `"${(value ?? '').replaceAll('"', '""')}"`
+    const rows = students.map((student) => [student.student_id, student.display_name, student.native_name, student.language, student.phonetic_spelling, student.program, student.announcement_text].map(escapeCsv).join(','))
+    const csv = `\uFEFF${headers.join(',')}\n${rows.join('\n')}\n`
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `ceremony-${ceremonyId}-students.csv`
+    link.click()
+    URL.revokeObjectURL(url)
+    setNotice(`Exported ${students.length} student${students.length === 1 ? '' : 's'} to CSV.`)
+  }
+
   return <>
-    <div className="page-heading"><div><p className="eyebrow">GRADUATING CLASS</p><h2>Student pronunciation records</h2><p>Manage ceremony names, language guidance, and approved audio.</p></div><div className="heading-actions"><input ref={importRef} type="file" accept=".csv" hidden onChange={(e) => importCsv(e.target.files?.[0])} /><button className="secondary" onClick={() => importRef.current?.click()}>Import CSV</button><button className="primary" onClick={() => setShowAdd(true)}>+ Add student</button></div></div>
+    <div className="page-heading ceremony-students-heading"><div><p className="eyebrow">CEREMONY GRADUATES</p><h2>Student pronunciation records</h2><p>These students belong only to this ceremony.</p><small className="csv-format-note">CSV headers can be in any order. Required: <strong>student_id</strong>, <strong>display_name</strong>. Optional: <strong>native_name</strong>, <strong>language</strong>, <strong>phonetic_spelling</strong>, <strong>program</strong>, <strong>announcement_text</strong>.</small></div><div className="heading-actions"><input ref={importRef} type="file" accept=".csv" hidden onChange={(e) => importCsv(e.target.files?.[0])} /><button className="secondary" onClick={exportCsv}>Export Students to CSV</button><button className="secondary" onClick={() => importRef.current?.click()}>Import CSV</button><button className="primary" onClick={() => setShowAdd(true)}>+ Add student</button></div></div>
     <section className="panel table-panel">
       <div className="table-tools"><label className="search"><span>⌕</span><input placeholder="Search by name, ID, or program" value={search} onChange={(e) => setSearch(e.target.value)} /></label><span>{filtered.length} students</span></div>
       <div className="table-wrap"><table><thead><tr><th>Student</th><th>Program</th><th>Pronunciation</th><th>Audio</th><th></th></tr></thead><tbody>
         {filtered.map((student) => <tr key={student.id}><td><div className="student-cell"><span className="initials">{student.display_name.split(' ').slice(0,2).map((part) => part[0]).join('')}</span><div><strong>{student.display_name}</strong>{student.native_name && <small dir="auto">{student.native_name}</small>}<small>ID {student.student_id}</small></div></div></td><td>{student.program || <span className="muted">Not set</span>}</td><td><span className={`badge ${student.pronunciation_status}`}>{statusLabel(student.pronunciation_status)}</span>{student.phonetic_spelling && <small className="block">{student.phonetic_spelling}</small>}</td><td>{student.active_audio ? <button className="play-mini" onClick={() => new Audio(student.active_audio!.url).play()}>▶ Play</button> : <span className="muted">Missing</span>}</td><td><button className="text-button" onClick={() => setEditing(student)}>Review</button></td></tr>)}
       </tbody></table></div>
     </section>
-    {(editing || showAdd) && <StudentModal student={editing} close={() => { setEditing(null); setShowAdd(false) }} reload={reload} setNotice={setNotice} />}
+    {(editing || showAdd) && <StudentModal ceremonyId={ceremonyId} student={editing} close={() => { setEditing(null); setShowAdd(false) }} reload={reload} setNotice={setNotice} />}
   </>
 }
 
-function StudentModal({ student, close, reload, setNotice }: { student: Student | null; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
+function StudentModal({ ceremonyId, student, close, reload, setNotice }: { ceremonyId: number; student: Student | null; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', language: student?.language ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status ?? 'pending', notes: student?.notes ?? '' })
   const [supportedLanguages, setSupportedLanguages] = useState<string[]>([])
   const [audioFile, setAudioFile] = useState<File | null>(null)
@@ -235,7 +239,7 @@ function StudentModal({ student, close, reload, setNotice }: { student: Student 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     try {
-      const saved = student ? await api.patch<Student>(`/api/students/${student.id}`, form) : await api.post<Student>('/api/students', form)
+      const saved = student ? await api.patch<Student>(`/api/students/${student.id}`, form) : await api.post<Student>(`/api/ceremonies/${ceremonyId}/students/new`, form)
       if (audioFile) {
         const data = new FormData(); data.append('file', audioFile); data.append('source', 'upload'); data.append('approve', 'true')
         await api.post(`/api/students/${saved.id}/audio`, data)
@@ -259,22 +263,65 @@ function StudentModal({ student, close, reload, setNotice }: { student: Student 
   <div className="modal-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary">Save record</button></div></form></div>
 }
 
-function Ceremonies({ ceremonies, students, reload, setSelected, setNotice }: { ceremonies: Ceremony[]; students: Student[]; reload: () => Promise<void>; setSelected: (id: number) => void; setNotice: (value: string) => void }) {
+function Ceremonies({ ceremonies, selectedCeremonyId, reload, setSelected, setNotice }: { ceremonies: Ceremony[]; selectedCeremonyId: number | null; reload: () => Promise<void>; setSelected: (id: number | null) => void; setNotice: (value: string) => void }) {
   const [detail, setDetail] = useState<CeremonyDetail | null>(null)
   const [showCreate, setShowCreate] = useState(false)
+  const [editingCeremony, setEditingCeremony] = useState<Ceremony | null>(null)
   const [form, setForm] = useState({ name: '', event_date: '', location: '' })
+  const [createError, setCreateError] = useState('')
+  const [creating, setCreating] = useState(false)
   const loadDetail = (id: number) => api.get<CeremonyDetail>(`/api/ceremonies/${id}`).then(setDetail).catch((e) => setNotice(e.message))
-  const create = async (event: React.FormEvent) => { event.preventDefault(); try { const ceremony = await api.post<Ceremony>('/api/ceremonies', form); await reload(); setSelected(ceremony.id); setShowCreate(false); loadDetail(ceremony.id) } catch (e) { setNotice((e as Error).message) } }
-  const assign = async (studentId: number) => { if (!detail || !studentId) return; try { const updated = await api.post<CeremonyDetail>(`/api/ceremonies/${detail.id}/students`, { student_id: studentId }); setDetail(updated); await reload() } catch (e) { setNotice((e as Error).message) } }
-  const unassigned = students.filter((student) => !detail?.entries.some((entry) => entry.student.id === student.id))
+  useEffect(() => { if (selectedCeremonyId) void loadDetail(selectedCeremonyId); else setDetail(null) }, [selectedCeremonyId])
+  const create = async (event: React.FormEvent) => {
+    event.preventDefault(); setCreateError('')
+    if (!form.name.trim()) { setCreateError('Enter a ceremony name.'); return }
+    if (!form.event_date) { setCreateError('Choose a ceremony date.'); return }
+    setCreating(true)
+    try {
+      const ceremony = editingCeremony
+        ? await api.patch<Ceremony>(`/api/ceremonies/${editingCeremony.id}`, { ...form, name: form.name.trim(), location: form.location.trim() })
+        : await api.post<Ceremony>('/api/ceremonies', { ...form, name: form.name.trim(), location: form.location.trim() })
+      await reload(); setSelected(ceremony.id); await loadDetail(ceremony.id)
+      setForm({ name: '', event_date: '', location: '' }); setShowCreate(false); setEditingCeremony(null)
+      setNotice(`${ceremony.name} ${editingCeremony ? 'updated' : 'created'}.`)
+    } catch (e) {
+      setCreateError((e as Error).message)
+    } finally { setCreating(false) }
+  }
+  const editCeremony = () => {
+    if (!detail) return
+    setCreateError('')
+    setForm({ name: detail.name, event_date: detail.event_date, location: detail.location })
+    setEditingCeremony(detail)
+  }
+  const deleteCeremony = async () => {
+    if (!detail || !window.confirm(`Delete ${detail.name}? This will remove its roster assignments.`)) return
+    setCreateError('')
+    setCreating(true)
+    try {
+      await api.delete(`/api/ceremonies/${detail.id}`)
+      await reload()
+      setSelected(null)
+      setDetail(null)
+      setShowCreate(false)
+      setEditingCeremony(null)
+      setForm({ name: '', event_date: '', location: '' })
+      setNotice(`${detail.name} deleted.`)
+    } catch (e) {
+      setCreateError((e as Error).message)
+    } finally { setCreating(false) }
+  }
+  const closeCeremonyModal = () => { if (!creating) { setShowCreate(false); setEditingCeremony(null); setCreateError(''); setForm({ name: '', event_date: '', location: '' }) } }
+  const reloadCeremony = async () => { await reload(); if (detail) await loadDetail(detail.id) }
   return <>
-    <div className="page-heading"><div><p className="eyebrow">EVENT PLANNING</p><h2>Ceremonies</h2><p>Organize graduates and confirm every announcement is ready.</p></div><button className="primary" onClick={() => setShowCreate(true)}>+ New ceremony</button></div>
+    <div className="page-heading"><div><p className="eyebrow">EVENT PLANNING</p><h2>Ceremonies</h2><p>Organize graduates and confirm every announcement is ready.</p></div><button className="primary" onClick={() => { setCreateError(''); setShowCreate(true) }}>+ New ceremony</button></div>
     {detail && <p><a href={`/api/ceremonies/${detail.id}/qr-cards`} target="_blank" rel="noreferrer">Open printable QR cards for {detail.name}</a></p>}
     <div className="ceremony-grid">
       <section className="ceremony-list">{ceremonies.map((ceremony) => <button key={ceremony.id} className={detail?.id === ceremony.id ? 'ceremony-card selected' : 'ceremony-card'} onClick={() => { loadDetail(ceremony.id); setSelected(ceremony.id) }}><span className="date-tile"><b>{new Date(`${ceremony.event_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</b><strong>{new Date(`${ceremony.event_date}T12:00:00`).getDate()}</strong></span><div><strong>{ceremony.name}</strong><small>{ceremony.location || 'Location not set'}</small><small>{ceremony.student_count} students</small></div><span>→</span></button>)}</section>
-      <section className="panel ceremony-detail">{detail ? <><div className="panel-heading"><div><p className="eyebrow">CEREMONY ROSTER</p><h3>{detail.name}</h3></div><select defaultValue="" onChange={(e) => { assign(Number(e.target.value)); e.target.value = '' }}><option value="">+ Assign student</option>{unassigned.map((student) => <option value={student.id} key={student.id}>{student.display_name}</option>)}</select></div><div className="roster">{detail.entries.map((entry) => <div className="roster-row" key={entry.id}><span>{entry.position}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-mark' : 'missing-mark'}>{entry.student.active_audio ? '✓ Audio ready' : '! Audio missing'}</span></div>)}{detail.entries.length === 0 && <p className="empty">Assign students to build the processional order.</p>}</div></> : <div className="empty-state"><span>◇</span><h3>Select a ceremony</h3><p>Choose an event to review its roster.</p></div>}</section>
+      <section className="panel ceremony-detail">{detail ? <><div className="panel-heading"><div><p className="eyebrow">CEREMONY ROSTER</p><h3>{detail.name}</h3></div><div className="panel-heading-actions"><button className="secondary" onClick={editCeremony}>Edit ceremony</button></div></div><div className="roster">{detail.entries.map((entry) => <div className="roster-row" key={entry.id}><span>{entry.position}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={entry.student.active_audio ? 'ready-mark' : 'missing-mark'}>{entry.student.active_audio ? '✓ Audio ready' : '! Audio missing'}</span></div>)}{detail.entries.length === 0 && <p className="empty">Add or import students below to build this ceremony.</p>}</div></> : <div className="empty-state"><span>◇</span><h3>Select a ceremony</h3><p>Choose an event to manage its graduating class.</p></div>}</section>
     </div>
-    {showCreate && <div className="modal-backdrop"><form className="modal small-modal" onSubmit={create}><div className="modal-heading"><h2>New ceremony</h2><button type="button" className="close" onClick={() => setShowCreate(false)}>×</button></div><div className="form-grid single"><label>Ceremony name<input required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} /></label><label>Date<input required type="date" value={form.event_date} onChange={(e) => setForm({...form, event_date: e.target.value})} /></label><label>Location<input value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} /></label></div><div className="modal-actions"><button type="button" className="secondary" onClick={() => setShowCreate(false)}>Cancel</button><button className="primary">Create ceremony</button></div></form></div>}
+    {detail && <Students ceremonyId={detail.id} students={detail.entries.map(entry => entry.student)} reload={reloadCeremony} setNotice={setNotice} />}
+    {(showCreate || editingCeremony) && <div className="modal-backdrop"><form className="modal small-modal" onSubmit={create} noValidate><div className="modal-heading"><h2>{editingCeremony ? 'Edit ceremony' : 'New ceremony'}</h2><button type="button" className="close" disabled={creating} onClick={closeCeremonyModal}>×</button></div><div className="form-grid single"><label>Ceremony name<input autoFocus required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} /></label><label>Date<input required type="date" value={form.event_date} onChange={(e) => setForm({...form, event_date: e.target.value})} /></label><label>Location <small>(optional)</small><input value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} /></label></div>{createError && <p className="modal-error" role="alert">{createError}</p>}<div className="modal-actions">{editingCeremony && <button type="button" className="danger-button" disabled={creating} onClick={deleteCeremony}>Delete ceremony</button>}<button type="button" className="secondary" disabled={creating} onClick={closeCeremonyModal}>Cancel</button><button className="primary" disabled={creating}>{creating ? 'Saving…' : editingCeremony ? 'Save ceremony' : 'Create ceremony'}</button></div></form></div>}
   </>
 }
 
