@@ -33,6 +33,24 @@ def test_duplicate_student_id_is_rejected(client):
     assert client.post("/api/students", json=payload).status_code == 409
 
 
+def test_student_delete_removes_ceremony_entry(client):
+    student = client.post(
+        "/api/students", json={"student_id": "S-250", "display_name": "Delete Student"}
+    ).json()
+    ceremony = client.post(
+        "/api/ceremonies", json={"name": "Delete Ceremony", "event_date": "2027-05-01"}
+    ).json()
+    assert client.post(
+        f"/api/ceremonies/{ceremony['id']}/students", json={"student_id": student["id"]}
+    ).status_code == 200
+
+    deleted = client.delete(f"/api/students/{student['id']}")
+
+    assert deleted.status_code == 200
+    assert client.get(f"/api/ceremonies/{ceremony['id']}").json()["entries"] == []
+    assert client.get("/api/students").json() == []
+
+
 def test_csv_import_supports_native_names(client):
     csv_data = (
         "student_id,display_name,native_name,language,phonetic_spelling,program\n"

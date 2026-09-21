@@ -143,6 +143,23 @@ def update_student(student_pk: int, payload: StudentUpdate, db: Session = Depend
     return serialize_student(student)
 
 
+@app.delete("/api/students/{student_pk}")
+def delete_student(student_pk: int, db: Session = Depends(get_db)):
+    student = db.scalar(student_query().where(Student.id == student_pk))
+    if not student:
+        raise HTTPException(404, "Student not found")
+    student_name = student.display_name
+    audio_paths = [AUDIO_DIR / audio.filename for audio in student.audio_assets]
+    for entry in list(student.ceremony_entries):
+        db.delete(entry)
+    db.delete(student)
+    audit(db, "student.deleted", f"Deleted {student_name}", "student", student_pk)
+    db.commit()
+    for audio_path in audio_paths:
+        audio_path.unlink(missing_ok=True)
+    return {"message": f"{student_name} deleted."}
+
+
 @app.post("/api/students/import")
 async def import_students(file: UploadFile = File(...), db: Session = Depends(get_db)):
     if not (file.filename or "").lower().endswith(".csv"):

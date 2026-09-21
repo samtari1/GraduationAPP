@@ -182,10 +182,14 @@ function Stat({ label, value, detail, tone = '' }: { label: string; value: strin
 
 function Students({ ceremonyId, students, reload, setNotice }: { ceremonyId: number; students: Student[]; reload: () => Promise<void>; setNotice: (value: string) => void }) {
   const [search, setSearch] = useState('')
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [editing, setEditing] = useState<Student | null>(null)
   const [showAdd, setShowAdd] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const importRef = useRef<HTMLInputElement>(null)
   const filtered = useMemo(() => students.filter((student) => `${student.display_name} ${student.student_id} ${student.program}`.toLowerCase().includes(search.toLowerCase())), [students, search])
+  const visibleIds = filtered.map((student) => student.id)
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id))
 
   const importCsv = async (file?: File) => {
     if (!file) return
@@ -212,12 +216,36 @@ function Students({ ceremonyId, students, reload, setNotice }: { ceremonyId: num
     setNotice(`Exported ${students.length} student${students.length === 1 ? '' : 's'} to CSV.`)
   }
 
+  const selectVisible = (selected: boolean) => {
+    setSelectedIds((current) => {
+      const next = new Set(current)
+      visibleIds.forEach((id) => selected ? next.add(id) : next.delete(id))
+      return next
+    })
+  }
+
+  const deleteSelected = async () => {
+    const selectedStudents = students.filter((student) => selectedIds.has(student.id))
+    if (!selectedStudents.length || !window.confirm(`Delete ${selectedStudents.length} selected student${selectedStudents.length === 1 ? '' : 's'}? This will remove their ceremony records and audio.`)) return
+    setDeleting(true)
+    try {
+      await Promise.all(selectedStudents.map((student) => api.delete(`/api/students/${student.id}`)))
+      setSelectedIds(new Set())
+      setNotice(`${selectedStudents.length} student${selectedStudents.length === 1 ? '' : 's'} deleted.`)
+      await reload()
+    } catch (error) {
+      setNotice((error as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return <>
     <div className="page-heading ceremony-students-heading"><div><p className="eyebrow">CEREMONY GRADUATES</p><h2>Student pronunciation records</h2><p>These students belong only to this ceremony.</p><small className="csv-format-note">CSV headers can be in any order. Required: <strong>student_id</strong>, <strong>display_name</strong>. Optional: <strong>native_name</strong>, <strong>language</strong>, <strong>phonetic_spelling</strong>, <strong>program</strong>, <strong>announcement_text</strong>.</small></div><div className="heading-actions"><input ref={importRef} type="file" accept=".csv" hidden onChange={(e) => importCsv(e.target.files?.[0])} /><button className="secondary" onClick={exportCsv}>Export Students to CSV</button><button className="secondary" onClick={() => importRef.current?.click()}>Import CSV</button><button className="primary" onClick={() => setShowAdd(true)}>+ Add student</button></div></div>
     <section className="panel table-panel">
-      <div className="table-tools"><label className="search"><span>⌕</span><input placeholder="Search by name, ID, or program" value={search} onChange={(e) => setSearch(e.target.value)} /></label><span>{filtered.length} students</span></div>
-      <div className="table-wrap"><table><thead><tr><th>Student</th><th>Program</th><th>Pronunciation</th><th>Audio</th><th></th></tr></thead><tbody>
-        {filtered.map((student) => <tr key={student.id}><td><div className="student-cell"><span className="initials">{student.display_name.split(' ').slice(0,2).map((part) => part[0]).join('')}</span><div><strong>{student.display_name}</strong>{student.native_name && <small dir="auto">{student.native_name}</small>}<small>ID {student.student_id}</small></div></div></td><td>{student.program || <span className="muted">Not set</span>}</td><td><span className={`badge ${student.pronunciation_status}`}>{statusLabel(student.pronunciation_status)}</span>{student.phonetic_spelling && <small className="block">{student.phonetic_spelling}</small>}</td><td>{student.active_audio ? <button className="play-mini" onClick={() => new Audio(student.active_audio!.url).play()}>▶ Play</button> : <span className="muted">Missing</span>}</td><td><button className="text-button" onClick={() => setEditing(student)}>Review</button></td></tr>)}
+      <div className="table-tools"><label className="search"><span>⌕</span><input placeholder="Search by name, ID, or program" value={search} onChange={(e) => setSearch(e.target.value)} /></label><span>{filtered.length} students</span><div className="selection-actions"><button className="secondary" type="button" disabled={!visibleIds.length} onClick={() => selectVisible(true)}>Select all</button><button className="secondary" type="button" disabled={!selectedIds.size} onClick={() => selectVisible(false)}>Deselect all</button><button className="danger-button" type="button" disabled={!selectedIds.size || deleting} onClick={deleteSelected}>{deleting ? 'Deleting…' : `Delete selected${selectedIds.size ? ` (${selectedIds.size})` : ''}`}</button></div></div>
+      <div className="table-wrap"><table><thead><tr><th><input type="checkbox" aria-label={allVisibleSelected ? 'Deselect all visible students' : 'Select all visible students'} checked={allVisibleSelected} onChange={(event) => selectVisible(event.target.checked)} /></th><th>Student</th><th>Program</th><th>Pronunciation</th><th>Audio</th><th></th></tr></thead><tbody>
+        {filtered.map((student) => <tr key={student.id}><td><input type="checkbox" aria-label={`Select ${student.display_name}`} checked={selectedIds.has(student.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(student.id); else next.delete(student.id); return next })} /></td><td><div className="student-cell"><span className="initials">{student.display_name.split(' ').slice(0,2).map((part) => part[0]).join('')}</span><div><strong>{student.display_name}</strong>{student.native_name && <small dir="auto">{student.native_name}</small>}<small>ID {student.student_id}</small></div></div></td><td>{student.program || <span className="muted">Not set</span>}</td><td><span className={`badge ${student.pronunciation_status}`}>{statusLabel(student.pronunciation_status)}</span>{student.phonetic_spelling && <small className="block">{student.phonetic_spelling}</small>}</td><td>{student.active_audio ? <button className="play-mini" onClick={() => new Audio(student.active_audio!.url).play()}>▶ Play</button> : <span className="muted">Missing</span>}</td><td><button className="text-button" onClick={() => setEditing(student)}>Review</button></td></tr>)}
       </tbody></table></div>
     </section>
     {(editing || showAdd) && <StudentModal ceremonyId={ceremonyId} student={editing} close={() => { setEditing(null); setShowAdd(false) }} reload={reload} setNotice={setNotice} />}
