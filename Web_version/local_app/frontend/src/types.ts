@@ -4,6 +4,7 @@ export type AudioAsset = {
   original_filename: string
   source: string
   voice?: string | null
+  language_code?: string | null
   generation_input?: string | null
   approved: boolean
   url: string
@@ -23,6 +24,7 @@ export type Student = {
   notes: string | null
   active_audio_id: number | null
   active_audio: AudioAsset | null
+  portal_updated_fields: string[]
 }
 
 export type Ceremony = {

@@ -46,6 +46,12 @@ Base.metadata.create_all(bind=engine)
 if "line_position" not in {column["name"] for column in inspect(engine).get_columns("ceremony_entries")}:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE ceremony_entries ADD COLUMN line_position INTEGER"))
+if "portal_updated_fields_json" not in {column["name"] for column in inspect(engine).get_columns("students")}:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE students ADD COLUMN portal_updated_fields_json TEXT"))
+if "language_code" not in {column["name"] for column in inspect(engine).get_columns("audio_assets")}:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE audio_assets ADD COLUMN language_code VARCHAR(35)"))
 
 app = FastAPI(title="GradVoice", version="0.1.0")
 app.add_middleware(
@@ -72,6 +78,7 @@ def student_query():
 
 def serialize_student(student: Student) -> StudentOut:
     result = StudentOut.model_validate(student)
+    result.portal_updated_fields = json.loads(student.portal_updated_fields_json or "[]")
     if result.active_audio:
         result.active_audio.url = f"/media/{result.active_audio.filename}"
     return result
@@ -311,6 +318,8 @@ def ceremony_detail(db: Session, ceremony_id: int) -> Ceremony:
 def serialize_detail(ceremony: Ceremony) -> CeremonyDetail:
     result = CeremonyDetail.model_validate(ceremony).model_copy(update={"student_count": len(ceremony.entries)})
     for entry in result.entries:
+        source_student = next(item.student for item in ceremony.entries if item.id == entry.id)
+        entry.student.portal_updated_fields = json.loads(source_student.portal_updated_fields_json or "[]")
         if entry.student.active_audio:
             entry.student.active_audio.url = f"/media/{entry.student.active_audio.filename}"
     return result
@@ -647,6 +656,8 @@ def inspect_portal_package(ceremony_id: int, raw: bytes, db: Session):
             "action": "update" if student else "skip",
             "display_name": profile.get("display_name", ""),
             "audio": "included" if has_audio else "not included",
+            "changed": profile.get("changes", []),
+            "audio_changed": bool((profile.get("audio") or {}).get("changed")),
         })
     return manifest, profiles, contents, {"students": changes, "unknown_count": sum(item["action"] == "skip" for item in changes)}
 
@@ -679,6 +690,10 @@ async def import_portal_package(
             for key in ("display_name", "native_name", "language", "phonetic_spelling", "program", "announcement_text"):
                 if key in profile:
                     setattr(student, key, profile[key])
+            portal_changes = list(profile.get("changes", []))
+            if (profile.get("audio") or {}).get("changed"):
+                portal_changes.append("audio")
+            student.portal_updated_fields_json = json.dumps(portal_changes, ensure_ascii=False)
             audio_info = profile.get("audio") or {}
             audio_path = audio_info.get("path")
             if audio_path and audio_path in contents:
@@ -694,6 +709,8 @@ async def import_portal_package(
                     filename=filename,
                     original_filename=audio_info.get("original_filename") or filename,
                     source=f"portal:{audio_info.get('source', 'upload')}",
+                    voice=audio_info.get("voice"), language_code=audio_info.get("language_code"),
+                    generation_input=audio_info.get("generation_input"),
                     approved=bool(audio_info.get("approved")),
                 )
                 db.add(asset)
@@ -767,7 +784,7 @@ def generate_speech(student_pk: int, payload: SpeechRequest, db: Session = Depen
         destination.write_bytes(content)
         asset = AudioAsset(student_id=student_pk, filename=filename,
                            original_filename=f"Google pronunciation ({voice_label}).mp3",
-                           source="google-cloud", voice=voice_label,
+                           source="google-cloud", voice=voice_label, language_code=payload.language_code,
                            generation_input=json.dumps(metadata, ensure_ascii=False), approved=False)
         db.add(asset)
         db.flush()

@@ -13,6 +13,7 @@ class AudioOut(BaseModel):
     original_filename: str
     source: str
     voice: Optional[str] = None
+    language_code: Optional[str] = None
     approved: bool
     created_at: datetime
     url: str = ""
@@ -21,6 +22,7 @@ class AudioOut(BaseModel):
 
 class SpeechRequest(BaseModel):
     text: str = Field(min_length=1, max_length=500)
+    text_source: str = Field(default="custom text", max_length=80)
     language_code: str = Field(pattern=r"^[a-zA-Z]{2,3}(-[a-zA-Z0-9]{2,8})+$", max_length=35)
     voice_name: str = Field(min_length=1, max_length=100)
     speaking_rate: float = Field(default=1.0, ge=0.25, le=2.0)
@@ -60,6 +62,7 @@ class StudentOut(StudentBase):
     qr_token: str
     active_audio_id: Optional[int] = None
     active_audio: Optional[AudioOut] = None
+    portal_updated_fields: list[str] = []
     created_at: datetime
     updated_at: datetime
 
@@ -99,6 +102,7 @@ class EntryStudent(BaseModel):
     pronunciation_status: str
     active_audio_id: Optional[int]
     active_audio: Optional[AudioOut] = None
+    portal_updated_fields: list[str] = []
 
 
 class EntryOut(BaseModel):

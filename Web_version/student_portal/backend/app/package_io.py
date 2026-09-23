@@ -15,6 +15,12 @@ PACKAGE_VERSION = 1
 def _digest(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
+
+PROFILE_FIELDS = (
+    "display_name", "native_name", "language", "phonetic_spelling",
+    "program", "announcement_text",
+)
+
 def build_package(students: list[dict], audio_dir: Path, ceremony: Optional[dict] = None) -> bytes:
     files: dict[str, bytes] = {}
     manifest_students = []
@@ -24,12 +30,23 @@ def build_package(students: list[dict], audio_dir: Path, ceremony: Optional[dict
             "student_id", "display_name", "native_name", "language", "phonetic_spelling",
             "program", "announcement_text",
         )}
+        baseline = student.get("baseline_profile") or {key: profile.get(key) for key in PROFILE_FIELDS}
+        profile["baseline"] = baseline
+        profile["changes"] = [key for key in PROFILE_FIELDS if profile.get(key) != baseline.get(key)]
         audio_filename = student.get("current_audio_filename")
         audio_path = audio_dir / audio_filename if audio_filename else None
         if audio_path and audio_path.is_file():
             audio_name = f"students/{student_id}/audio/{student_id}{audio_path.suffix.lower()}"
-            files[audio_name] = audio_path.read_bytes()
-            profile["audio"] = {"path": audio_name, "source": "portal", "approved": True}
+            audio_content = audio_path.read_bytes()
+            files[audio_name] = audio_content
+            digest = _digest(audio_content)
+            baseline_digest = student.get("baseline_audio_sha256")
+            profile["audio"] = {"path": audio_name, "source": "portal", "approved": True,
+                                 "sha256": digest, "baseline_sha256": baseline_digest,
+                                 "changed": bool(baseline_digest and baseline_digest != digest)}
+            for key in ("original_filename", "voice", "language_code", "generation_input"):
+                if student.get(f"audio_{key}") is not None:
+                    profile["audio"][key] = student[f"audio_{key}"]
         profile_name = f"students/{student_id}/profile.json"
         files[profile_name] = json.dumps(profile, ensure_ascii=False, indent=2).encode("utf-8")
         manifest_students.append({"student_id": student_id, "profile": profile_name})

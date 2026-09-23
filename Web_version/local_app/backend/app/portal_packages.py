@@ -27,6 +27,8 @@ def _profile(student, audio_path: Path | None, audio_asset) -> tuple[dict, bytes
         "announcement_text": student.announcement_text,
         "pronunciation_status": student.pronunciation_status,
     }
+    profile["baseline"] = dict(profile)
+    profile["changes"] = []
     if not audio_path or not audio_asset or not audio_path.is_file():
         return profile, None, None
     audio_content = audio_path.read_bytes()
@@ -36,6 +38,12 @@ def _profile(student, audio_path: Path | None, audio_asset) -> tuple[dict, bytes
         "source": audio_asset.source,
         "approved": audio_asset.approved,
         "original_filename": audio_asset.original_filename,
+        "voice": audio_asset.voice,
+        "language_code": audio_asset.language_code,
+        "generation_input": audio_asset.generation_input,
+        "sha256": _digest(audio_content),
+        "baseline_sha256": _digest(audio_content),
+        "changed": False,
     }
     return profile, audio_content, audio_name
 

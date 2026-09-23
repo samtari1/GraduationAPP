@@ -12,7 +12,7 @@ from typing import Optional
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import inspect, select, text
 from sqlalchemy.orm import Session
 
 from .database import AUDIO_DIR, Base, SessionLocal, engine, get_db
@@ -23,6 +23,15 @@ from . import google_speech
 
 
 Base.metadata.create_all(bind=engine)
+PROFILE_FIELDS = (
+    "display_name", "native_name", "language", "phonetic_spelling",
+    "program", "announcement_text",
+)
+portal_inspector = inspect(engine)
+for column, definition in (("invitation_token", "VARCHAR(255)"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)")):
+    if portal_inspector.has_table("portal_students") and column not in {item["name"] for item in portal_inspector.get_columns("portal_students")}:
+        with engine.begin() as connection:
+            connection.execute(text(f"ALTER TABLE portal_students ADD COLUMN {column} {definition}"))
 app = FastAPI(title="GradVoice Student Portal", version="0.1.0")
 PORTAL_ENV = os.getenv("PORTAL_ENV", "development")
 STAFF_TOKEN = os.getenv("PORTAL_STAFF_TOKEN") or ("dev-staff-token" if PORTAL_ENV == "development" else None)
@@ -156,15 +165,20 @@ async def import_roster(
         ceremony.location = ceremony_data.get("location")
     for student_id, profile in profiles.items():
         student = db.scalar(select(PortalStudent).where(PortalStudent.student_id == student_id))
-        invitation = secrets.token_urlsafe(32)
+        invitation = student.invitation_token if student and student.invitation_token else secrets.token_urlsafe(32)
         if not student:
-            student = PortalStudent(student_id=student_id, invitation_token_hash=token_hash(invitation))
+            student = PortalStudent(student_id=student_id, invitation_token=invitation, invitation_token_hash=token_hash(invitation))
             db.add(student)
         else:
-            student.invitation_token_hash = token_hash(invitation)
-        for key in ("display_name", "native_name", "language", "phonetic_spelling", "program", "announcement_text"):
-            if key in profile:
+            if not student.invitation_token:
+                student.invitation_token = invitation
+                student.invitation_token_hash = token_hash(invitation)
+        incoming_baseline = profile.get("baseline") or {key: profile.get(key) for key in PROFILE_FIELDS}
+        stored_baseline = json.loads(student.baseline_profile_json) if student.baseline_profile_json else None
+        for key in PROFILE_FIELDS:
+            if key in profile and (not stored_baseline or getattr(student, key) == stored_baseline.get(key)):
                 setattr(student, key, profile[key])
+        student.baseline_profile_json = json.dumps(incoming_baseline, ensure_ascii=False)
         audio = profile.get("audio") or {}
         audio_path = audio.get("path")
         if audio_path and audio_path in contents:
@@ -173,7 +187,19 @@ async def import_roster(
                 raise HTTPException(400, f"Unsupported audio format for {student_id}")
             filename = f"baseline-{uuid.uuid4().hex}{suffix}"
             (AUDIO_DIR / filename).write_bytes(contents[audio_path])
-            student.current_audio_filename = filename
+            student.baseline_audio_sha256 = audio.get("sha256") or hashlib.sha256(contents[audio_path]).hexdigest()
+            approved_candidate = db.scalar(select(PortalAudioCandidate).where(
+                PortalAudioCandidate.student_id == student.id, PortalAudioCandidate.approved.is_(True)))
+            approved_submission = db.scalar(select(PronunciationSubmission).where(
+                PronunciationSubmission.student_id == student.id,
+                PronunciationSubmission.status == "approved",
+            ).order_by(PronunciationSubmission.reviewed_at.desc()))
+            if approved_candidate:
+                student.current_audio_filename = approved_candidate.filename
+            elif approved_submission and approved_submission.filename:
+                student.current_audio_filename = approved_submission.filename
+            else:
+                student.current_audio_filename = filename
         db.flush()
         if not db.scalar(select(PortalCeremonyStudent).where(PortalCeremonyStudent.ceremony_id == ceremony.id, PortalCeremonyStudent.student_id == student.id)):
             db.add(PortalCeremonyStudent(ceremony_id=ceremony.id, student_id=student.id))
@@ -222,7 +248,7 @@ def candidate_out(candidate: PortalAudioCandidate):
 @app.patch("/api/student/me/profile")
 def update_profile(payload: StudentProfileUpdate, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     student = current_student(authorization, db)
-    for key, value in payload.model_dump().items():
+    for key, value in payload.model_dump(exclude_unset=True).items():
         setattr(student, key, value)
     db.commit()
     return {"student_id": student.student_id, "display_name": student.display_name}
@@ -249,14 +275,14 @@ def list_candidates(authorization: Optional[str] = Header(default=None), db: Ses
 @app.post("/api/student/me/candidates")
 def generate_candidate(payload: SpeechRequest, authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     student = current_student(authorization, db)
-    content = google_speech.synthesize(payload.text, payload.language_code, payload.voice_name, payload.speaking_rate)
+    content = google_speech.synthesize(payload.text, payload.language_code, payload.voice_name, 1.0)
     filename = f"candidate-{uuid.uuid4().hex}.mp3"
     destination = AUDIO_DIR / filename
     try:
         destination.write_bytes(content)
         candidate = PortalAudioCandidate(student_id=student.id, filename=filename, source="google-cloud",
                                          voice=payload.voice_name, language_code=payload.language_code,
-                                         generation_input=json.dumps({**payload.model_dump(), "student_id": student.student_id}, ensure_ascii=False))
+                                         generation_input=json.dumps({**payload.model_dump(), "speaking_rate": 1.0, "student_id": student.student_id}, ensure_ascii=False))
         db.add(candidate)
         db.commit()
         db.refresh(candidate)
@@ -398,6 +424,18 @@ def staff_student_progress(ceremony_id: Optional[int] = None, _: None = Depends(
     return result
 
 
+@app.post("/api/staff/students/{student_id}/invitation-token")
+def regenerate_invitation_token(student_id: str, _: None = Depends(require_staff), db: Session = Depends(get_db)):
+    student = db.scalar(select(PortalStudent).where(PortalStudent.student_id == student_id))
+    if not student:
+        raise HTTPException(404, "Student not found")
+    if not student.invitation_token:
+        student.invitation_token = secrets.token_urlsafe(32)
+        student.invitation_token_hash = token_hash(student.invitation_token)
+        db.commit()
+    return {"student_id": student.student_id, "token": student.invitation_token}
+
+
 @app.post("/api/staff/submissions/{submission_id}/review")
 def review_submission(
     submission_id: int,
@@ -422,12 +460,44 @@ def export_portal_package(ceremony_id: Optional[int] = None, _: None = Depends(r
     if ceremony_id:
         statement = statement.join(PortalCeremonyStudent, PortalCeremonyStudent.student_id == PortalStudent.id).where(PortalCeremonyStudent.ceremony_id == ceremony_id)
     students = db.scalars(statement).all()
+    package_students = []
+    for student in students:
+        current_path = AUDIO_DIR / student.current_audio_filename if student.current_audio_filename else None
+        if not student.baseline_audio_sha256 and current_path and current_path.is_file():
+            student.baseline_audio_sha256 = hashlib.sha256(current_path.read_bytes()).hexdigest()
+        if not student.baseline_profile_json:
+            student.baseline_profile_json = json.dumps({key: getattr(student, key) for key in PROFILE_FIELDS}, ensure_ascii=False)
+        approved_candidate = db.scalar(select(PortalAudioCandidate).where(
+            PortalAudioCandidate.student_id == student.id, PortalAudioCandidate.approved.is_(True)))
+        approved_submission = db.scalar(select(PronunciationSubmission).where(
+            PronunciationSubmission.student_id == student.id,
+            PronunciationSubmission.status == "approved",
+        ).order_by(PronunciationSubmission.reviewed_at.desc()))
+        if approved_candidate:
+            student.current_audio_filename = approved_candidate.filename
+            audio_metadata = {"audio_original_filename": f"Google pronunciation ({approved_candidate.voice or 'Automatic'}).mp3",
+                              "audio_voice": approved_candidate.voice, "audio_language_code": approved_candidate.language_code,
+                              "audio_generation_input": approved_candidate.generation_input}
+        elif approved_submission and approved_submission.filename:
+            student.current_audio_filename = approved_submission.filename
+            audio_metadata = {"audio_original_filename": approved_submission.original_filename,
+                              "audio_voice": None, "audio_language_code": None, "audio_generation_input": None}
+        else:
+            audio_metadata = {}
+        package_students.append({
+            "student_id": student.student_id, "display_name": student.display_name,
+            "native_name": student.native_name, "language": student.language,
+            "phonetic_spelling": student.phonetic_spelling, "program": student.program,
+            "announcement_text": student.announcement_text,
+            "current_audio_filename": student.current_audio_filename,
+            "baseline_profile": json.loads(student.baseline_profile_json),
+            "baseline_audio_sha256": student.baseline_audio_sha256,
+            **audio_metadata,
+        })
     package = build_package([
-        {"student_id": student.student_id, "display_name": student.display_name, "native_name": student.native_name,
-         "language": student.language, "phonetic_spelling": student.phonetic_spelling, "program": student.program,
-         "announcement_text": student.announcement_text, "current_audio_filename": student.current_audio_filename}
-        for student in students
+        student for student in package_students
     ], AUDIO_DIR, {"name": "Portal student updates"})
+    db.commit()
     return Response(content=package, media_type="application/zip", headers={
         "Content-Disposition": "attachment; filename=gradvoice-portal-approved.zip",
     })

@@ -203,9 +203,9 @@ function Students({ ceremonyId, students, reload, setNotice }: { ceremonyId: num
   }
 
   const exportCsv = () => {
-    const headers = ['student_id', 'display_name', 'native_name', 'language', 'phonetic_spelling', 'program', 'announcement_text']
+    const headers = ['student_id', 'display_name', 'native_name', 'phonetic_spelling', 'program', 'announcement_text']
     const escapeCsv = (value: string | null) => `"${(value ?? '').replaceAll('"', '""')}"`
-    const rows = students.map((student) => [student.student_id, student.display_name, student.native_name, student.language, student.phonetic_spelling, student.program, student.announcement_text].map(escapeCsv).join(','))
+    const rows = students.map((student) => [student.student_id, student.display_name, student.native_name, student.phonetic_spelling, student.program, student.announcement_text].map(escapeCsv).join(','))
     const csv = `\uFEFF${headers.join(',')}\n${rows.join('\n')}\n`
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
     const link = document.createElement('a')
@@ -253,20 +253,11 @@ function Students({ ceremonyId, students, reload, setNotice }: { ceremonyId: num
 }
 
 function StudentModal({ ceremonyId, student, close, reload, setNotice }: { ceremonyId: number; student: Student | null; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
-  const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', language: student?.language ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status ?? 'pending', notes: student?.notes ?? '' })
-  const [supportedLanguages, setSupportedLanguages] = useState<string[]>([])
+  const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status ?? 'pending', notes: student?.notes ?? '' })
   const [audioFile, setAudioFile] = useState<File | null>(null)
   const dirty = !!student && Object.entries(form).some(([key, value]) => value !== (student[key as keyof Student] ?? ''))
   const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
-  useEffect(() => {
-    let active = true
-    api.get<string[]>('/api/speech/languages').then(result => {
-      if (!active) return
-      const sorted = result.slice().sort((a, b) => languageDisplayName(a).localeCompare(languageDisplayName(b)))
-      setSupportedLanguages(sorted)
-    }).catch(error => setNotice((error as Error).message))
-    return () => { active = false }
-  }, [student?.id])
+  const portalUpdated = (key: string) => student?.portal_updated_fields.includes(key)
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
     try {
@@ -280,14 +271,13 @@ function StudentModal({ ceremonyId, student, close, reload, setNotice }: { cerem
   }
   return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}><form className="modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">PRONUNCIATION RECORD</p><h2>{student ? 'Review student' : 'Add student'}</h2></div><button type="button" className="close" onClick={close}>×</button></div><div className="form-grid">
     <label>Student ID<input required value={form.student_id} onChange={(e) => update('student_id', e.target.value)} /></label>
-    <label>Display name<input required value={form.display_name} onChange={(e) => update('display_name', e.target.value)} /></label>
-    <label>Native-language name<input dir="auto" value={form.native_name} onChange={(e) => update('native_name', e.target.value)} /></label>
-    <label>Language or regional variety<select value={form.language} onChange={(e) => update('language', e.target.value)}><option value="">Select a language</option>{form.language && !supportedLanguages.includes(form.language) && <option value={form.language}>{form.language} (existing value)</option>}{supportedLanguages.map(code => <option value={code} key={code}>{languageDisplayName(code)} · {code}</option>)}</select></label>
-    <label className="wide">Phonetic guide<input value={form.phonetic_spelling} placeholder="e.g. ngwin meen ahn" onChange={(e) => update('phonetic_spelling', e.target.value)} /></label>
-    <label>Program<input value={form.program} onChange={(e) => update('program', e.target.value)} /></label>
+    <label>Display name{portalUpdated('display_name') && <em className="portal-update-label">Updated from portal</em>}<input required value={form.display_name} onChange={(e) => update('display_name', e.target.value)} /></label>
+    <label>Native-language name{portalUpdated('native_name') && <em className="portal-update-label">Updated from portal</em>}<input dir="auto" value={form.native_name} onChange={(e) => update('native_name', e.target.value)} /></label>
+    <label className="wide">Phonetic guide{portalUpdated('phonetic_spelling') && <em className="portal-update-label">Updated from portal</em>}<input value={form.phonetic_spelling} placeholder="e.g. ngwin meen ahn" onChange={(e) => update('phonetic_spelling', e.target.value)} /></label>
+    <label>Program{portalUpdated('program') && <em className="portal-update-label">Updated from portal</em>}<input value={form.program} onChange={(e) => update('program', e.target.value)} /></label>
     <label>Status<select value={form.pronunciation_status} onChange={(e) => update('pronunciation_status', e.target.value)}><option value="pending">Pending</option><option value="needs_review">Needs review</option><option value="approved">Approved</option></select></label>
-    <label className="wide">Exact ceremony announcement<input value={form.announcement_text} placeholder={form.display_name || 'Name to announce'} onChange={(e) => update('announcement_text', e.target.value)} /></label>
-    <label className="wide upload-zone">Approved pronunciation audio<input type="file" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} /><span>{audioFile?.name ?? (student?.active_audio ? `Current: ${student.active_audio.original_filename}` : 'Choose an MP3, WAV, M4A, OGG, or WebM file')}</span></label>
+    <label className="wide">Exact ceremony announcement{portalUpdated('announcement_text') && <em className="portal-update-label">Updated from portal</em>}<input value={form.announcement_text} placeholder={form.display_name || 'Name to announce'} onChange={(e) => update('announcement_text', e.target.value)} /></label>
+    <label className="wide upload-zone">Approved pronunciation audio{portalUpdated('audio') && <em className="portal-update-label">Updated from portal</em>}<input type="file" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} /><span>{audioFile?.name ?? (student?.active_audio ? `Current: ${student.active_audio.original_filename}` : 'Choose an MP3, WAV, M4A, OGG, or WebM file')}</span></label>
     <label className="wide">Reviewer notes<textarea rows={3} value={form.notes} onChange={(e) => update('notes', e.target.value)} /></label>
   </div>
   {student && <PronunciationTools student={student} dirty={dirty || !!audioFile} onChanged={async (updated, message) => { setForm(current => ({ ...current, pronunciation_status: updated.pronunciation_status })); await reload(); setNotice(message) }} />}
@@ -366,7 +356,10 @@ function Ceremonies({ ceremonies, selectedCeremonyId, reload, setSelected, setNo
       const preview = await previewResponse.json()
       if (!previewResponse.ok) throw new Error(preview.detail || previewResponse.statusText)
       const includedAudio = preview.students.filter((student: { audio: string }) => student.audio === 'included').length
-      if (!window.confirm(`Import ${preview.students.length} portal profile${preview.students.length === 1 ? '' : 's'} and ${includedAudio} audio file${includedAudio === 1 ? '' : 's'} into ${detail.name}?`)) return
+      const changedProfiles = preview.students.filter((student: { changed?: string[] }) => (student.changed || []).length > 0).length
+      const changedAudio = preview.students.filter((student: { audio_changed?: boolean }) => student.audio_changed).length
+      const labels = `${changedProfiles} profile${changedProfiles === 1 ? '' : 's'} changed, ${changedAudio} audio selection${changedAudio === 1 ? '' : 's'} changed`
+      if (!window.confirm(`Import ${preview.students.length} portal profile${preview.students.length === 1 ? '' : 's'} and ${includedAudio} audio file${includedAudio === 1 ? '' : 's'} into ${detail.name}?\n\n${labels}.`)) return
       const importData = new FormData(); importData.append('file', file); importData.append('activate_audio', 'true')
       const importResponse = await fetch(`/api/ceremonies/${detail.id}/portal-package/import`, { method: 'POST', body: importData })
       const result = await importResponse.json()

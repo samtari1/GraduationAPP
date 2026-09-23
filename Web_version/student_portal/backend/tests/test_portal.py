@@ -27,9 +27,10 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
     monkeypatch.setenv("PORTAL_DATABASE_URL", f"sqlite:///{tmp_path / 'portal.sqlite3'}")
     monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "data"))
     monkeypatch.setenv("PORTAL_STORAGE_DIR", str(tmp_path / "storage"))
-    from backend.app import database, main
+    from backend.app import database, main, models
     import importlib
     importlib.reload(database)
+    importlib.reload(models)
     importlib.reload(main)
     with TestClient(main.app) as client:
         imported = client.post(
@@ -51,6 +52,10 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         token = imported.json()["invites"][0]["token"]
         headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
+        regenerated = client.post("/api/staff/students/S-901/invitation-token", headers={"X-Portal-Staff-Token": "dev-staff-token"})
+        assert regenerated.status_code == 200
+        assert regenerated.json()["token"] == token
+        assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
         updated = client.patch(
             "/api/student/me/profile",
             headers=headers,
@@ -64,7 +69,12 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
             },
         )
         assert updated.status_code == 200
-        assert client.get("/api/student/me", headers=headers).json()["program"] == "Arts"
+        profile_after_update = client.get("/api/student/me", headers=headers).json()
+        assert profile_after_update["display_name"] == "Portal Student"
+        assert profile_after_update["program"] == ""
+        assert profile_after_update["announcement_text"] == "Portal Student"
+        assert profile_after_update["native_name"] == "Native Student"
+        assert profile_after_update["phonetic_spelling"] == "up-DAY-ted"
         assert client.get("/api/student/me", headers=headers).json()["recording_enabled"] is False
         submission = client.post(
             "/api/student/me/submissions",
@@ -106,5 +116,44 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         assert exported.status_code == 200
         from backend.app.package_io import read_package
         _, profiles, contents = read_package(exported.content)
-        assert profiles["S-901"]["display_name"] == "Updated Student"
+        assert profiles["S-901"]["display_name"] == "Portal Student"
         assert profiles["S-901"]["audio"]["path"] in contents
+
+
+def test_reimport_preserves_selected_portal_audio_and_marks_changes(tmp_path, monkeypatch):
+    monkeypatch.setenv("PORTAL_DATABASE_URL", f"sqlite:///{tmp_path / 'portal.sqlite3'}")
+    monkeypatch.setenv("PORTAL_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.setenv("PORTAL_STORAGE_DIR", str(tmp_path / "storage"))
+    from backend.app import database, main, models
+    from backend.app import google_speech
+    import importlib
+    importlib.reload(database)
+    importlib.reload(models)
+    importlib.reload(main)
+    monkeypatch.setattr(google_speech, "synthesize", lambda *args: b"portal-audio")
+    with TestClient(main.app) as client:
+        headers = {"X-Portal-Staff-Token": "dev-staff-token"}
+        imported = client.post("/api/staff/rosters/import", headers=headers,
+                               files={"file": ("roster.zip", make_package(), "application/zip")})
+        token = imported.json()["invites"][0]["token"]
+        from backend.app.models import PortalStudent
+        with main.SessionLocal() as db:
+            db.query(PortalStudent).filter(PortalStudent.student_id == "S-901").update(
+                {PortalStudent.baseline_audio_sha256: "baseline-hash"})
+            db.commit()
+        student_headers = {"Authorization": f"Bearer {token}"}
+        candidate = client.post("/api/student/me/candidates", headers=student_headers, json={
+            "text": "Portal pronunciation", "language_code": "en-US",
+            "voice_name": "en-US-Standard-A", "speaking_rate": 1,
+        })
+        assert candidate.status_code == 200
+        assert client.post(f"/api/student/me/candidates/{candidate.json()['id']}/approve",
+                            headers=student_headers).status_code == 200
+        exported = client.get("/api/staff/portal-package/export", headers=headers)
+        assert exported.status_code == 200
+        from backend.app.package_io import read_package
+        _, profiles, contents = read_package(exported.content)
+        profile = profiles["S-901"]
+        assert profile["audio"]["source"] == "portal"
+        assert profile["audio"]["changed"] is True
+        assert profile["audio"]["path"] in contents

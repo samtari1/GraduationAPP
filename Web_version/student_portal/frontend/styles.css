@@ -1,3 +1,4 @@
+.read-only-value { display: block; min-height: 38px; margin-top: 5px; padding: 10px 11px; border: 1px solid #e1ddd3; border-radius: 6px; background: #f7f5ef; color: #4e5c57; font-weight: 400; letter-spacing: 0; }
 :root { color: #173f3a; background: #f3efe5; font-family: Georgia, serif; --ink: #173f3a; --muted: #53615b; --line: #c8d0c7; --gold: #b1842b; --surface: #fffdf8; --radius: 12px; }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #d8e5db, transparent 38%), #f3efe5; }
@@ -32,6 +33,18 @@ main { width: min(1040px, calc(100% - 56px)); margin: 0 auto; padding: 48px 0 72
 h1 { max-width: 680px; margin: 14px 0 8px; font-size: clamp(42px, 6vw, 68px); line-height: .95; }
 .intro { max-width: 680px; margin: 0; font-size: 18px; color: #53615b; }
 .panel { margin-top: 28px; padding: 26px 30px 32px; background: var(--surface); border: 1px solid #d8d3c7; border-radius: var(--radius); box-shadow: 8px 8px 0 #d8e5db; }
+.record-heading { display: flex; align-items: start; justify-content: space-between; gap: 24px; padding-bottom: 24px; border-bottom: 1px solid #e2ded4; }
+.record-heading h2 { margin: 5px 0 8px; font-size: clamp(28px, 4vw, 42px); }
+.section-intro, .section-heading p { margin: 0; color: var(--muted); line-height: 1.5; }
+.autosave-badge, .standard-setting { flex: 0 0 auto; padding: 8px 11px; border-radius: 999px; background: #e6eadf; color: var(--ink); font: 700 12px Arial, sans-serif; }
+.record-section { padding: 26px 0; border-bottom: 1px solid #e2ded4; }
+.record-section:last-child { border-bottom: 0; padding-bottom: 0; }
+.record-section .section-heading { margin-bottom: 18px; }
+.record-section h3 { margin: 0 0 6px; font-size: 21px; }
+.pronunciation-section { margin: 0 -30px; padding: 26px 30px; background: #f7f8f2; }
+.speech-settings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+.candidate-section { padding-top: 24px; }
+.submission-section ul { margin-bottom: 0; }
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
 label.wide, .wide { grid-column: 1 / -1; }
 textarea { width: 100%; min-height: 76px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink); font: 16px Georgia, serif; resize: vertical; }
@@ -54,7 +67,7 @@ hr { margin: 24px 0; border: 0; border-top: 1px solid #d8d3c7; }
 .candidate-actions button:disabled { cursor: default; opacity: .65; }
 .empty-candidates { color: #53615b; }
 .feature-disabled { padding: 12px; border-radius: 8px; background: #f3efe5; color: var(--muted); }
-@media (max-width: 700px) { main { width: min(100% - 32px, 560px); padding: 32px 0 48px; } .panel { padding: 22px 18px 26px; } .form-grid, .progress-grid { grid-template-columns: 1fr; } .candidate-heading, .candidate-topline, .candidate-actions, .submission, .section-heading, .student-progress-header { align-items: stretch; flex-direction: column; } }
+@media (max-width: 700px) { main { width: min(100% - 32px, 560px); padding: 32px 0 48px; } .panel { padding: 22px 18px 26px; } .form-grid, .progress-grid, .speech-settings { grid-template-columns: 1fr; } .pronunciation-section { margin: 0 -18px; padding: 24px 18px; } .record-heading, .candidate-heading, .candidate-topline, .candidate-actions, .submission, .section-heading, .student-progress-header { align-items: stretch; flex-direction: column; } }
 label { display: grid; gap: 8px; font: 700 14px Arial, sans-serif; }
 input { width: 100%; min-height: 45px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); font: 16px monospace; }
 button { margin-top: 18px; padding: 12px 18px; border: 0; border-radius: 9px; background: var(--gold); color: white; font: 700 14px Arial, sans-serif; cursor: pointer; transition: background .18s ease, transform .18s ease, box-shadow .18s ease; }

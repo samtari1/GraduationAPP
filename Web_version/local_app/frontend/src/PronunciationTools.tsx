@@ -12,33 +12,11 @@ export const languageDisplayName = (code: string) => {
   }
 }
 
-const preferredLanguageCodes: Record<string, string> = {
-  english: 'en-US',
-  'english (us)': 'en-US',
-  spanish: 'es-US',
-  'spanish (mexico)': 'es-MX',
-  vietnamese: 'vi-VN',
-  arabic: 'ar-XA',
-  igbo: 'ig-NG',
-  mandarin: 'cmn-CN',
-  'mandarin (taiwan)': 'cmn-TW',
-  cantonese: 'yue-HK',
-  chinese: 'cmn-CN',
-  french: 'fr-FR',
-  portuguese: 'pt-BR',
-}
-
-export const resolveLanguageCode = (savedLanguage: string | null | undefined, supported: string[]) => {
-  const value = savedLanguage?.trim()
-  if (!value) return null
-  const exactCode = supported.find(code => code.toLocaleLowerCase() === value.toLocaleLowerCase())
-  if (exactCode) return exactCode
-  const normalized = value.toLocaleLowerCase()
-  const preferred = preferredLanguageCodes[normalized]
-  if (preferred && supported.includes(preferred)) return preferred
-  const exactLabel = supported.find(code => languageDisplayName(code).toLocaleLowerCase() === normalized)
-  if (exactLabel) return exactLabel
-  return supported.find(code => languageDisplayName(code).toLocaleLowerCase().startsWith(`${normalized} (`)) ?? null
+const audioSourceLabel = (source: string) => {
+  if (source.startsWith('portal:')) return source === 'portal:upload' ? 'Student recording' : 'Google Cloud'
+  if (source === 'google-cloud') return 'Google Cloud'
+  if (source === 'upload') return 'Local upload'
+  return source
 }
 
 export default function PronunciationTools({ student, dirty, onChanged }: {
@@ -50,6 +28,7 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
   const [language, setLanguage] = useState('')
   const [voice, setVoice] = useState('')
   const [text, setText] = useState(student.announcement_text || student.display_name)
+  const [textSource, setTextSource] = useState('Display name / ceremony announcement')
   const [rate, setRate] = useState(1)
   const [busy, setBusy] = useState(false)
   const [approvingId, setApprovingId] = useState<number | null>(null)
@@ -92,7 +71,7 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
         if (!active) return
         const sorted = result.slice().sort((a, b) => languageDisplayName(a).localeCompare(languageDisplayName(b)))
         setLanguages(sorted)
-        const preferred = resolveLanguageCode(student.language, result) ?? (result.includes('en-US') ? 'en-US' : result[0])
+        const preferred = result.includes('en-US') ? 'en-US' : result[0]
         if (!preferred) {
           setMessage('Google did not return any supported languages.')
           return
@@ -111,13 +90,13 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
     }
     void prepareLanguages()
     return () => { active = false }
-  }, [student.id, student.language])
+  }, [student.id])
 
   const generate = async () => {
     setBusy(true); setMessage('')
     try {
       const asset = await api.post<AudioAsset>(`/api/students/${student.id}/speech`, {
-        text, language_code: language, voice_name: voice, speaking_rate: rate,
+        text, text_source: textSource, language_code: language, voice_name: voice, speaking_rate: rate,
       })
       setAssets(current => [asset, ...current])
       setMessage('Candidate saved locally. Listen before selecting it for the ceremony.')
@@ -153,17 +132,16 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
   }
 
   return <section className="pronunciation-tools">
-    <h3>Google pronunciation studio</h3>
-    <p>Generation sends the text below to Google Cloud and may incur charges. Saved MP3s play offline. Credentials stay on the server.</p>
+    <p><strong>Pronunciation</strong> · Generation sends the text below to Google Cloud and may incur charges. Saved MP3s play offline. Credentials stay on the server.</p>
     {dirty && <p className="studio-message">Save your record changes before generating or selecting audio.</p>}
     <div className="speech-settings">
-      <label className="wide">Pronunciation language<select value={language} disabled={busy || !languages.length} onChange={e => { const code = e.target.value; setLanguage(code); setVoices([]); setVoice(''); void loadVoices(code) }}><option value="">{busy ? 'Loading supported languages…' : 'Select a language'}</option>{languages.map(code => <option value={code} key={code}>{languageDisplayName(code)} · {code}</option>)}</select><small>{resolveLanguageCode(student.language, languages) === language ? `Automatically selected from “Language or regional variety”: ${student.language}.` : 'Manual override selected for this audio candidate.'}</small></label>
+      <label className="wide">Pronunciation language<select value={language} disabled={busy || !languages.length} onChange={e => { const code = e.target.value; setLanguage(code); setVoices([]); setVoice(''); void loadVoices(code) }}><option value="">{busy ? 'Loading supported languages…' : 'Select a language'}</option>{languages.map(code => <option value={code} key={code}>{languageDisplayName(code)} · {code}</option>)}</select><small>Choose the language or regional variety used for this audio candidate.</small></label>
       <label className="wide">Voice<select value={voice} onChange={e => setVoice(e.target.value)}><option value="">Load and select a voice</option>{voices.length > 0 && <option value="__auto__">Automatic · Let Google choose for {languageDisplayName(language)}</option>}{voices.map(item => <option value={item.name} key={item.name}>{item.name} · {item.gender}</option>)}</select></label>
       <label className="wide">Text to pronounce<textarea rows={2} value={text} onChange={e => setText(e.target.value)} maxLength={500} /></label>
       <div className="wide speech-presets">
-        <button type="button" onClick={() => setText(student.announcement_text || student.display_name)}>Ceremony name</button>
-        <button type="button" disabled={!student.native_name} onClick={() => setText(student.native_name ?? '')}>Native-script name</button>
-        <button type="button" disabled={!student.phonetic_spelling} onClick={() => setText(student.phonetic_spelling ?? '')}>Phonetic spelling</button>
+        <button type="button" onClick={() => { setTextSource('Display name / ceremony announcement'); setText(student.announcement_text || student.display_name) }}>Display name</button>
+        <button type="button" disabled={!student.native_name} onClick={() => { setTextSource('Native-language name'); setText(student.native_name ?? '') }}>Native name</button>
+        <button type="button" disabled={!student.phonetic_spelling} onClick={() => { setTextSource('Phonetic guide'); setText(student.phonetic_spelling ?? '') }}>Phonetic spelling</button>
       </div>
       <label>Speaking rate<input type="number" min="0.25" max="2" step="0.05" value={rate} onChange={e => setRate(Number(e.target.value))} /></label>
       <div className="generate-control"><button type="button" className="primary" onClick={generate} disabled={busy || !!generationBlocker} title={generationBlocker}>{busy ? 'Working…' : 'Generate new candidate'}</button>{!busy && generationBlocker && <small>{generationBlocker}</small>}</div>
@@ -173,7 +151,11 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
     {!assets.length && <p>No saved candidates yet.</p>}
     {assets.map(asset => <div className="audio-candidate" key={asset.id}>
       <strong>#{asset.id} · {asset.voice || asset.original_filename}</strong>
-      <small>{asset.source}{asset.id === selectedAudioId ? ' · Selected for ceremony' : ''}</small>
+      {asset.source.startsWith('portal:') && student.portal_updated_fields.includes('audio') && <em className="portal-update-label">Updated from portal</em>}
+      <small>{audioSourceLabel(asset.source)}{asset.language_code ? ` · ${languageDisplayName(asset.language_code)}` : ''}{asset.voice ? ` · ${asset.voice}` : ''}</small>
+      {asset.id === selectedAudioId && <small className="selected-audio-label">{asset.source.startsWith('portal:') ? 'Selected by student for ceremony' : 'Selected for ceremony'}</small>}
+      {asset.generation_input && <small>{(() => { try { const metadata = JSON.parse(asset.generation_input); return `Text: ${metadata.text_source || 'Custom text'} — “${metadata.text}”` } catch { return `Text: ${asset.generation_input}` } })()}</small>}
+      {asset.generation_input && <small>{(() => { try { const metadata = JSON.parse(asset.generation_input); return `Settings: ${metadata.language_code ? languageDisplayName(metadata.language_code) : ''} · ${metadata.voice_name || asset.voice || ''} · speaking rate ${metadata.speaking_rate || 1}` } catch { return '' } })()}</small>}
       <audio controls preload="none" src={asset.url} aria-label={`Preview candidate ${asset.id}`} />
       <div className="candidate-actions"><button type="button" className="secondary" disabled={approvingId !== null || deletingId !== null} onClick={() => approve(asset)}>{approvingId === asset.id ? 'Selecting…' : asset.id === selectedAudioId ? 'Selected pronunciation' : 'Use this pronunciation'}</button><button type="button" className="danger-button" disabled={approvingId !== null || deletingId !== null} onClick={() => remove(asset)}>{deletingId === asset.id ? 'Deleting…' : 'Delete'}</button></div>
     </div>)}
