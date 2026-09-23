@@ -1,0 +1,44 @@
+:root { color: #173f3a; background: #f3efe5; font-family: Georgia, serif; --ink: #173f3a; --muted: #53615b; --line: #c8d0c7; --gold: #b1842b; --surface: #fffdf8; --radius: 12px; }
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #d8e5db, transparent 38%), #f3efe5; }
+main { width: min(1040px, calc(100% - 56px)); margin: 0 auto; padding: 48px 0 72px; }
+.auth-page { max-width: 760px; }
+.review-header { display: flex; align-items: end; justify-content: space-between; gap: 24px; }
+.quiet-button { margin-top: 0; background: transparent; color: var(--ink); border: 1px solid var(--line); }
+.eyebrow { color: #9a7023; font: 700 12px/1.2 Arial, sans-serif; letter-spacing: .12em; }
+h1 { max-width: 680px; margin: 14px 0 8px; font-size: clamp(42px, 6vw, 68px); line-height: .95; }
+.intro { max-width: 680px; margin: 0; font-size: 18px; color: #53615b; }
+.panel { margin-top: 28px; padding: 26px 30px 32px; background: var(--surface); border: 1px solid #d8d3c7; border-radius: var(--radius); box-shadow: 8px 8px 0 #d8e5db; }
+.form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px 20px; }
+label.wide, .wide { grid-column: 1 / -1; }
+textarea { width: 100%; min-height: 76px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: #fff; color: var(--ink); font: 16px Georgia, serif; resize: vertical; }
+select { min-height: 45px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); }
+hr { margin: 24px 0; border: 0; border-top: 1px solid #d8d3c7; }
+.presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.presets button { margin-top: 0; background: #e6eadf; color: #173f3a; }
+.candidate { display: grid; gap: 10px; margin-top: 12px; padding: 14px 16px; border: 1px solid #d8d3c7; border-radius: 10px; background: #fff; }
+.candidate audio { width: 100%; height: 38px; border-radius: 8px; }
+.candidate-heading { display: flex; align-items: end; justify-content: space-between; gap: 18px; }
+.candidate-heading h3 { margin-bottom: 6px; }
+.candidate-heading p { margin-top: 0; color: #53615b; }
+.selection-rule { flex: 0 0 auto; padding: 8px 10px; border-radius: 999px; color: #6f531c; background: #f3e6bd; font: 700 12px Arial, sans-serif; }
+.candidate-topline, .candidate-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.candidate-status { color: #687471; font: 700 12px Arial, sans-serif; }
+.candidate.selected { border: 2px solid #2e7667; background: #f2f8f1; box-shadow: 0 3px 10px #2e766722; }
+.candidate.selected .candidate-status { color: #1d6658; }
+.candidate-actions button { margin-top: 0; }
+.candidate-actions .delete-candidate { background: #f1e5de; color: #7d392c; }
+.candidate-actions button:disabled { cursor: default; opacity: .65; }
+.empty-candidates { color: #53615b; }
+@media (max-width: 700px) { main { width: min(100% - 32px, 560px); padding: 32px 0 48px; } .panel { padding: 22px 18px 26px; } .form-grid { grid-template-columns: 1fr; } .candidate-heading, .candidate-topline, .candidate-actions { align-items: stretch; flex-direction: column; } }
+label { display: grid; gap: 8px; font: 700 14px Arial, sans-serif; }
+input { width: 100%; min-height: 45px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); font: 16px monospace; }
+button { margin-top: 18px; padding: 12px 18px; border: 0; border-radius: 9px; background: var(--gold); color: white; font: 700 14px Arial, sans-serif; cursor: pointer; transition: background .18s ease, transform .18s ease, box-shadow .18s ease; }
+button:hover:not(:disabled) { background: #986f20; box-shadow: 0 4px 10px #986f2030; transform: translateY(-1px); }
+button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible { outline: 3px solid #b1842b55; outline-offset: 2px; border-color: var(--gold); }
+button:disabled { cursor: not-allowed; opacity: .58; }
+h2, h3 { color: var(--ink); }
+h2 { margin-top: 0; }
+h3 { margin-bottom: 8px; }
+.hidden { display: none; }
+li { margin: 8px 0; color: var(--muted); }
