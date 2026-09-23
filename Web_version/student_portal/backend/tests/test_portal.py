@@ -38,6 +38,16 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
             files={"file": ("roster.zip", make_package(), "application/zip")},
         )
         assert imported.status_code == 200
+        ceremony_id = imported.json()["ceremony"]["id"]
+        ceremonies = client.get("/api/staff/ceremonies", headers={"X-Portal-Staff-Token": "dev-staff-token"})
+        assert ceremonies.status_code == 200
+        assert ceremonies.json()[0]["student_count"] == 1
+        progress = client.get(
+            f"/api/staff/students/progress?ceremony_id={ceremony_id}",
+            headers={"X-Portal-Staff-Token": "dev-staff-token"},
+        )
+        assert progress.status_code == 200
+        assert progress.json()[0]["student_id"] == "S-901"
         token = imported.json()["invites"][0]["token"]
         headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
@@ -55,6 +65,18 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         )
         assert updated.status_code == 200
         assert client.get("/api/student/me", headers=headers).json()["program"] == "Arts"
+        assert client.get("/api/student/me", headers=headers).json()["recording_enabled"] is False
+        submission = client.post(
+            "/api/student/me/submissions",
+            headers=headers,
+            files={"file": ("voice.wav", b"audio", "audio/wav")},
+        )
+        assert submission.status_code == 403
+        enabled = client.patch(
+            "/api/staff/settings?student_recording_enabled=true",
+            headers={"X-Portal-Staff-Token": "dev-staff-token"},
+        )
+        assert enabled.status_code == 200
         submission = client.post(
             "/api/student/me/submissions",
             headers=headers,
@@ -65,3 +87,24 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
             "/api/staff/submissions", headers={"X-Portal-Staff-Token": "dev-staff-token"}
         )
         assert staff_submissions.json()[0]["status"] == "pending"
+        staff_login = client.post("/api/staff/login", json={"username": "admin", "password": "admin"})
+        assert staff_login.status_code == 200
+        staff_headers = {"X-Portal-Staff-Token": staff_login.json()["token"]}
+        changed = client.post(
+            "/api/staff/password",
+            headers=staff_headers,
+            json={"current_password": "admin", "new_password": "admin-password"},
+        )
+        assert changed.status_code == 200
+        approved = client.post(
+            f"/api/staff/submissions/{submission.json()['id']}/review",
+            headers=staff_headers,
+            json={"status": "approved", "note": "Ready for ceremony"},
+        )
+        assert approved.status_code == 200
+        exported = client.get(f"/api/staff/portal-package/export?ceremony_id={ceremony_id}", headers=staff_headers)
+        assert exported.status_code == 200
+        from backend.app.package_io import read_package
+        _, profiles, contents = read_package(exported.content)
+        assert profiles["S-901"]["display_name"] == "Updated Student"
+        assert profiles["S-901"]["audio"]["path"] in contents

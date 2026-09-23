@@ -12,6 +12,15 @@ class TTSRequest(BaseModel):
 class ReviewRequest(BaseModel):
     status: str = Field(pattern="^(approved|rejected)$")
     note: Optional[str] = Field(default=None, max_length=2000)
+    
+class StaffLoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class StaffPasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=8, max_length=200)
 
 
 class StudentProfileUpdate(BaseModel):

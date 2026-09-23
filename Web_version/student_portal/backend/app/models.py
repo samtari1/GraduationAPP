@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -11,6 +11,44 @@ from .database import Base
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class StaffUser(Base):
+    __tablename__ = "staff_users"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    username: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(255))
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class PortalSetting(Base):
+    __tablename__ = "portal_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    value: Mapped[str] = mapped_column(String(20), default="false")
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class PortalCeremony(Base):
+    __tablename__ = "portal_ceremonies"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    local_id: Mapped[Optional[int]] = mapped_column(nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String(255), default="Unnamed ceremony")
+    event_date: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    location: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    imported_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
+
+
+class PortalCeremonyStudent(Base):
+    __tablename__ = "portal_ceremony_students"
+    __table_args__ = (UniqueConstraint("ceremony_id", "student_id", name="uq_portal_ceremony_student"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ceremony_id: Mapped[int] = mapped_column(ForeignKey("portal_ceremonies.id", ondelete="CASCADE"), index=True)
+    student_id: Mapped[int] = mapped_column(ForeignKey("portal_students.id", ondelete="CASCADE"), index=True)
 
 
 class PortalStudent(Base):

@@ -10,15 +10,15 @@ from pathlib import Path
 from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .database import AUDIO_DIR, Base, engine, get_db
-from .models import PortalAudioCandidate, PortalStudent, PronunciationSubmission, utcnow
-from .package_io import read_package
-from .schemas import ReviewRequest, SpeechRequest, StudentProfileUpdate, TTSRequest
+from .database import AUDIO_DIR, Base, SessionLocal, engine, get_db
+from .models import PortalAudioCandidate, PortalCeremony, PortalCeremonyStudent, PortalSetting, PortalStudent, PronunciationSubmission, StaffUser, utcnow
+from .package_io import build_package, read_package
+from .schemas import ReviewRequest, SpeechRequest, StaffLoginRequest, StaffPasswordChangeRequest, StudentProfileUpdate, TTSRequest
 from . import google_speech
 
 
@@ -26,18 +26,66 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="GradVoice Student Portal", version="0.1.0")
 PORTAL_ENV = os.getenv("PORTAL_ENV", "development")
 STAFF_TOKEN = os.getenv("PORTAL_STAFF_TOKEN") or ("dev-staff-token" if PORTAL_ENV == "development" else None)
+STAFF_SESSIONS: dict[str, str] = {}
 ALLOWED_AUDIO = {".mp3", ".wav", ".m4a", ".ogg", ".webm"}
+RECORDING_SETTING = "student_recording_enabled"
 
 
 def token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
-def require_staff(x_portal_staff_token: Optional[str] = Header(default=None)):
-    if not STAFF_TOKEN:
-        raise HTTPException(503, "PORTAL_STAFF_TOKEN is not configured")
-    if not x_portal_staff_token or not hmac.compare_digest(x_portal_staff_token, STAFF_TOKEN):
+def password_hash(password: str, salt: Optional[bytes] = None) -> str:
+    salt = salt or secrets.token_bytes(16)
+    rounds = 210_000
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, rounds)
+    return f"pbkdf2_sha256${rounds}${salt.hex()}${digest.hex()}"
+
+
+def password_matches(password: str, stored: str) -> bool:
+    try:
+        algorithm, rounds, salt_hex, digest_hex = stored.split("$", 3)
+        if algorithm != "pbkdf2_sha256":
+            return False
+        digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt_hex), int(rounds))
+        return hmac.compare_digest(digest.hex(), digest_hex)
+    except (TypeError, ValueError):
+        return False
+
+
+def seed_default_staff_user() -> None:
+    with SessionLocal() as db:
+        if not db.scalar(select(StaffUser).where(StaffUser.username == "admin")):
+            db.add(StaffUser(username="admin", password_hash=password_hash("admin")))
+            db.commit()
+
+
+def require_staff(x_portal_staff_token: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    valid_legacy_token = bool(STAFF_TOKEN and x_portal_staff_token and hmac.compare_digest(x_portal_staff_token, STAFF_TOKEN))
+    if not valid_legacy_token and (not x_portal_staff_token or x_portal_staff_token not in STAFF_SESSIONS):
         raise HTTPException(401, "Staff authentication is required")
+
+
+def session_staff(x_portal_staff_token: Optional[str], db: Session) -> StaffUser:
+    username = STAFF_SESSIONS.get(x_portal_staff_token or "")
+    staff = db.scalar(select(StaffUser).where(StaffUser.username == username)) if username else None
+    if not staff:
+        raise HTTPException(401, "Staff authentication is required")
+    return staff
+
+
+def recording_enabled(db: Session) -> bool:
+    setting = db.get(PortalSetting, RECORDING_SETTING)
+    return bool(setting and setting.value == "true")
+
+
+def ensure_settings(db: Session) -> None:
+    if not db.get(PortalSetting, RECORDING_SETTING):
+        db.add(PortalSetting(key=RECORDING_SETTING, value="false"))
+        db.commit()
+
+
+seed_default_staff_user()
 
 
 def current_student(authorization: Optional[str], db: Session) -> PortalStudent:
@@ -53,6 +101,35 @@ def current_student(authorization: Optional[str], db: Session) -> PortalStudent:
 def health():
     return {"status": "ok", "service": "student-portal", "authentication": "development-token"}
 
+@app.post("/api/staff/login")
+def staff_login(payload: StaffLoginRequest, db: Session = Depends(get_db)):
+    staff = db.scalar(select(StaffUser).where(StaffUser.username == payload.username))
+    if not staff or not password_matches(payload.password, staff.password_hash):
+        raise HTTPException(401, "Invalid staff username or password")
+    session_token = secrets.token_urlsafe(32)
+    STAFF_SESSIONS[session_token] = staff.username
+    return {"token": session_token, "username": staff.username}
+
+@app.post("/api/staff/logout")
+def staff_logout(x_portal_staff_token: Optional[str] = Header(default=None)):
+    if x_portal_staff_token:
+        STAFF_SESSIONS.pop(x_portal_staff_token, None)
+    return {"logged_out": True}
+
+
+@app.post("/api/staff/password")
+def change_staff_password(
+    payload: StaffPasswordChangeRequest,
+    x_portal_staff_token: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    staff = session_staff(x_portal_staff_token, db)
+    if not password_matches(payload.current_password, staff.password_hash):
+        raise HTTPException(401, "Current password is incorrect")
+    staff.password_hash = password_hash(payload.new_password)
+    db.commit()
+    return {"updated": True}
+
 
 @app.post("/api/staff/rosters/import")
 async def import_roster(
@@ -66,6 +143,17 @@ async def import_roster(
         raise HTTPException(400, str(error)) from error
     invites = []
     imported = 0
+    ceremony_data = manifest.get("ceremony") or {}
+    local_id = ceremony_data.get("local_id")
+    ceremony = db.scalar(select(PortalCeremony).where(PortalCeremony.local_id == local_id)) if local_id is not None else None
+    if not ceremony:
+        ceremony = PortalCeremony(local_id=local_id, name=ceremony_data.get("name") or "Unnamed ceremony", event_date=ceremony_data.get("event_date"), location=ceremony_data.get("location"))
+        db.add(ceremony)
+        db.flush()
+    else:
+        ceremony.name = ceremony_data.get("name") or ceremony.name
+        ceremony.event_date = ceremony_data.get("event_date")
+        ceremony.location = ceremony_data.get("location")
     for student_id, profile in profiles.items():
         student = db.scalar(select(PortalStudent).where(PortalStudent.student_id == student_id))
         invitation = secrets.token_urlsafe(32)
@@ -87,10 +175,12 @@ async def import_roster(
             (AUDIO_DIR / filename).write_bytes(contents[audio_path])
             student.current_audio_filename = filename
         db.flush()
+        if not db.scalar(select(PortalCeremonyStudent).where(PortalCeremonyStudent.ceremony_id == ceremony.id, PortalCeremonyStudent.student_id == student.id)):
+            db.add(PortalCeremonyStudent(ceremony_id=ceremony.id, student_id=student.id))
         invites.append({"student_id": student_id, "token": invitation})
         imported += 1
     db.commit()
-    return {"imported": imported, "ceremony": manifest.get("ceremony"), "invites": invites}
+    return {"imported": imported, "ceremony": {"id": ceremony.id, **ceremony_data}, "invites": invites}
 
 
 @app.post("/api/student/login")
@@ -102,6 +192,7 @@ def student_login(authorization: Optional[str] = Header(default=None), db: Sessi
 @app.get("/api/student/me")
 def student_profile(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     student = current_student(authorization, db)
+    ensure_settings(db)
     submissions = db.scalars(
         select(PronunciationSubmission)
         .where(PronunciationSubmission.student_id == student.id)
@@ -118,6 +209,7 @@ def student_profile(authorization: Optional[str] = Header(default=None), db: Ses
         "current_audio_url": f"/media/{student.current_audio_filename}" if student.current_audio_filename else None,
         "submissions": [{"id": item.id, "kind": item.kind, "status": item.status, "note": item.review_note} for item in submissions],
         "candidates": [candidate_out(item) for item in db.scalars(select(PortalAudioCandidate).where(PortalAudioCandidate.student_id == student.id).order_by(PortalAudioCandidate.id.desc())).all()],
+        "recording_enabled": recording_enabled(db),
     }
 
 
@@ -213,6 +305,8 @@ async def submit_audio(
     db: Session = Depends(get_db),
 ):
     student = current_student(authorization, db)
+    if not recording_enabled(db):
+        raise HTTPException(403, "Student recording uploads are currently disabled by staff")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_AUDIO:
         raise HTTPException(400, "Supported formats: MP3, WAV, M4A, OGG, and WebM")
@@ -253,6 +347,57 @@ def list_submissions(status: Optional[str] = None, _: None = Depends(require_sta
     ]
 
 
+@app.get("/api/staff/ceremonies")
+def list_ceremonies(_: None = Depends(require_staff), db: Session = Depends(get_db)):
+    ceremonies = db.scalars(select(PortalCeremony).order_by(PortalCeremony.event_date.desc(), PortalCeremony.id.desc())).all()
+    return [{"id": item.id, "local_id": item.local_id, "name": item.name, "event_date": item.event_date, "location": item.location,
+             "student_count": db.query(PortalCeremonyStudent).filter(PortalCeremonyStudent.ceremony_id == item.id).count()} for item in ceremonies]
+
+
+@app.get("/api/staff/settings")
+def staff_settings(_: None = Depends(require_staff), db: Session = Depends(get_db)):
+    ensure_settings(db)
+    return {"student_recording_enabled": recording_enabled(db)}
+
+
+@app.patch("/api/staff/settings")
+def update_staff_settings(
+    student_recording_enabled: bool,
+    _: None = Depends(require_staff),
+    db: Session = Depends(get_db),
+):
+    setting = db.get(PortalSetting, RECORDING_SETTING)
+    if not setting:
+        setting = PortalSetting(key=RECORDING_SETTING)
+        db.add(setting)
+    setting.value = "true" if student_recording_enabled else "false"
+    db.commit()
+    return {"student_recording_enabled": student_recording_enabled}
+
+
+@app.get("/api/staff/students/progress")
+def staff_student_progress(ceremony_id: Optional[int] = None, _: None = Depends(require_staff), db: Session = Depends(get_db)):
+    statement = select(PortalStudent).order_by(PortalStudent.student_id)
+    ceremony = db.get(PortalCeremony, ceremony_id) if ceremony_id else None
+    if ceremony_id:
+        statement = statement.join(PortalCeremonyStudent, PortalCeremonyStudent.student_id == PortalStudent.id).where(PortalCeremonyStudent.ceremony_id == ceremony_id)
+    students = db.scalars(statement).all()
+    result = []
+    for student in students:
+        submissions = db.scalars(select(PronunciationSubmission).where(PronunciationSubmission.student_id == student.id).order_by(PronunciationSubmission.created_at.desc())).all()
+        candidates = db.scalars(select(PortalAudioCandidate).where(PortalAudioCandidate.student_id == student.id).order_by(PortalAudioCandidate.id.desc())).all()
+        result.append({
+            "student_id": student.student_id,
+            "ceremony": {"id": ceremony.id, "name": ceremony.name, "event_date": ceremony.event_date} if ceremony else None,
+            "display_name": student.display_name,
+            "profile": {"display_name": student.display_name, "native_name": student.native_name, "language": student.language, "phonetic_spelling": student.phonetic_spelling, "program": student.program, "announcement_text": student.announcement_text},
+            "selected_audio_url": f"/media/{student.current_audio_filename}" if student.current_audio_filename else None,
+            "submissions": [{"id": item.id, "kind": item.kind, "status": item.status, "original_filename": item.original_filename, "url": f"/media/{item.filename}" if item.filename else None} for item in submissions],
+            "candidates": [{"id": item.id, "source": item.source, "voice": item.voice, "language_code": item.language_code, "approved": item.approved, "url": f"/media/{item.filename}"} for item in candidates],
+        })
+    return result
+
+
 @app.post("/api/staff/submissions/{submission_id}/review")
 def review_submission(
     submission_id: int,
@@ -270,6 +415,22 @@ def review_submission(
         submission.student.current_audio_filename = submission.filename
     db.commit()
     return {"id": submission.id, "status": submission.status}
+
+@app.get("/api/staff/portal-package/export")
+def export_portal_package(ceremony_id: Optional[int] = None, _: None = Depends(require_staff), db: Session = Depends(get_db)):
+    statement = select(PortalStudent).order_by(PortalStudent.student_id)
+    if ceremony_id:
+        statement = statement.join(PortalCeremonyStudent, PortalCeremonyStudent.student_id == PortalStudent.id).where(PortalCeremonyStudent.ceremony_id == ceremony_id)
+    students = db.scalars(statement).all()
+    package = build_package([
+        {"student_id": student.student_id, "display_name": student.display_name, "native_name": student.native_name,
+         "language": student.language, "phonetic_spelling": student.phonetic_spelling, "program": student.program,
+         "announcement_text": student.announcement_text, "current_audio_filename": student.current_audio_filename}
+        for student in students
+    ], AUDIO_DIR, {"name": "Portal student updates"})
+    return Response(content=package, media_type="application/zip", headers={
+        "Content-Disposition": "attachment; filename=gradvoice-portal-approved.zip",
+    })
 
 
 FRONTEND_DIR = Path(__file__).resolve().parents[2] / "frontend"
