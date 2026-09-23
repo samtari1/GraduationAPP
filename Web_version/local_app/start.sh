@@ -8,11 +8,9 @@ GRADVOICE_PORT="${GRADVOICE_PORT:-8012}"
 
 if [[ -x "$GRADVOICE_DIR/.venv/bin/python" ]]; then
   GRADVOICE_PYTHON="$GRADVOICE_DIR/.venv/bin/python"
-elif [[ -x "$GRADVOICE_DIR/../.venv/bin/python" ]]; then
-  GRADVOICE_PYTHON="$GRADVOICE_DIR/../.venv/bin/python"
 else
   echo "GradVoice could not find a Python virtual environment." >&2
-  echo "Create one at the repository root, then install Web_version/requirements.txt." >&2
+  echo "Create one at $GRADVOICE_DIR/.venv, then install requirements.txt." >&2
   exit 1
 fi
 

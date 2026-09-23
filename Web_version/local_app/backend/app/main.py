@@ -11,7 +11,7 @@ from pathlib import Path
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, inspect, or_, select, text
 from sqlalchemy.exc import IntegrityError
@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from .database import AUDIO_DIR, BACKUP_DIR, Base, DATA_DIR, SessionLocal, engine, get_db
 from .models import AudioAsset, AuditEvent, Ceremony, CeremonyEntry, Student
+from .portal_packages import build_package, read_package
 from . import google_speech
 from ..scanner_service import scanner_service
 from .schemas import (
@@ -607,6 +608,111 @@ def create_backup(db: Session = Depends(get_db)):
     audit(db, "backup.created", f"Created backup {destination.name}")
     db.commit()
     return {"filename": destination.name, "path": str(destination)}
+
+
+@app.get("/api/ceremonies/{ceremony_id}/portal-package/export")
+def export_portal_package(ceremony_id: int, db: Session = Depends(get_db)):
+    ceremony = ceremony_detail(db, ceremony_id)
+    content = build_package(ceremony, ceremony.entries, AUDIO_DIR)
+    audit(db, "portal_package.exported", f"Exported portal roster for {ceremony.name}", "ceremony", ceremony.id)
+    db.commit()
+    filename = f"gradvoice-portal-{ceremony.event_date}-{ceremony.id}.zip"
+    return StreamingResponse(
+        io.BytesIO(content),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def inspect_portal_package(ceremony_id: int, raw: bytes, db: Session):
+    ceremony = db.get(Ceremony, ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+    try:
+        manifest, profiles, contents = read_package(raw)
+    except (ValueError, KeyError, TypeError, json.JSONDecodeError) as error:
+        raise HTTPException(400, str(error)) from error
+    package_ceremony = manifest.get("ceremony") or {}
+    if package_ceremony.get("local_id") not in {None, ceremony_id}:
+        raise HTTPException(409, "Package belongs to a different ceremony")
+    existing = {student.student_id: student for student in db.scalars(select(Student)).all()}
+    changes = []
+    for student_id, profile in profiles.items():
+        student = existing.get(student_id)
+        audio = profile.get("audio") or {}
+        audio_path = audio.get("path")
+        has_audio = bool(audio_path and audio_path in contents)
+        changes.append({
+            "student_id": student_id,
+            "action": "update" if student else "skip",
+            "display_name": profile.get("display_name", ""),
+            "audio": "included" if has_audio else "not included",
+        })
+    return manifest, profiles, contents, {"students": changes, "unknown_count": sum(item["action"] == "skip" for item in changes)}
+
+
+@app.post("/api/ceremonies/{ceremony_id}/portal-package/preview")
+async def preview_portal_package(ceremony_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    _, _, _, preview = inspect_portal_package(ceremony_id, await file.read(), db)
+    return preview
+
+
+@app.post("/api/ceremonies/{ceremony_id}/portal-package/import")
+async def import_portal_package(
+    ceremony_id: int,
+    file: UploadFile = File(...),
+    activate_audio: bool = Form(True),
+    db: Session = Depends(get_db),
+):
+    raw = await file.read()
+    _, profiles, contents, preview = inspect_portal_package(ceremony_id, raw, db)
+    ceremony = db.get(Ceremony, ceremony_id)
+    existing = {student.student_id: student for student in db.scalars(select(Student)).all()}
+    imported = 0
+    audio_imported = 0
+    written_paths: list[Path] = []
+    try:
+        for student_id, profile in profiles.items():
+            student = existing.get(student_id)
+            if not student:
+                continue
+            for key in ("display_name", "native_name", "language", "phonetic_spelling", "program", "announcement_text"):
+                if key in profile:
+                    setattr(student, key, profile[key])
+            audio_info = profile.get("audio") or {}
+            audio_path = audio_info.get("path")
+            if audio_path and audio_path in contents:
+                suffix = Path(audio_path).suffix.lower()
+                if suffix not in {".mp3", ".wav", ".m4a", ".ogg", ".webm"}:
+                    raise ValueError(f"Unsupported audio format for {student_id}")
+                filename = f"{student.id}-{uuid.uuid4().hex}{suffix}"
+                destination = AUDIO_DIR / filename
+                destination.write_bytes(contents[audio_path])
+                written_paths.append(destination)
+                asset = AudioAsset(
+                    student_id=student.id,
+                    filename=filename,
+                    original_filename=audio_info.get("original_filename") or filename,
+                    source=f"portal:{audio_info.get('source', 'upload')}",
+                    approved=bool(audio_info.get("approved")),
+                )
+                db.add(asset)
+                db.flush()
+                if activate_audio and asset.approved:
+                    student.active_audio_id = asset.id
+                    student.pronunciation_status = "approved"
+                else:
+                    student.pronunciation_status = "needs_review"
+                audio_imported += 1
+            imported += 1
+        audit(db, "portal_package.imported", f"Imported portal package for {ceremony.name}", "ceremony", ceremony.id)
+        db.commit()
+    except Exception as error:
+        db.rollback()
+        for path in written_paths:
+            path.unlink(missing_ok=True)
+        raise HTTPException(400, f"Portal package import failed: {error}") from error
+    return {"imported": imported, "audio_imported": audio_imported, **preview}
 
 
 def playable_audio(student):

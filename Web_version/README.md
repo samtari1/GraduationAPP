@@ -17,13 +17,21 @@ An offline-first graduation pronunciation and stage-queue application for Sandhi
 - Student QR images and printable ceremony cards, using opaque tokens
 - Optional local serial-scanner bridge (CR, LF, and CRLF framing)
 
-## Local setup
+## Repository layout
+
+The two applications are intentionally isolated:
+
+- [local_app](local_app) is the offline ceremony application. It owns the local SQLite database, ceremony audio, scanner workflow, and React operator interface.
+- [student_portal](student_portal) is the separate hosted student self-service application. It has its own database, storage, virtual environment, and startup commands.
+
+## Local app setup
 
 Requirements: Python 3.9+, Node.js 20+, npm, and FFmpeg for future audio normalization.
 
-Run these commands from `Web_version`. If using the existing repository-root environment, use `source ../.venv/bin/activate` rather than creating a new one here.
+Run these commands from the repository root. The local app virtual environment is stored in `local_app/.venv` beside its setup script.
 
 ```bash
+cd local_app
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -34,11 +42,12 @@ python3 -m backend.app.seed
 Run the backend and frontend in separate terminals:
 
 ```bash
+cd local_app
 uvicorn backend.app.main:app --reload
 ```
 
 ```bash
-cd frontend
+cd local_app/frontend
 npm run dev
 ```
 
@@ -49,7 +58,7 @@ Open [http://localhost:5173](http://localhost:5173). API documentation is availa
 After completing the initial setup once, start the complete platform from the repository root with:
 
 ```bash
-./Web_version/start.sh
+./local_app/start.sh
 ```
 
 The launcher finds the project virtual environment, verifies the required tools, builds the React interface, and starts FastAPI at [http://127.0.0.1:8012](http://127.0.0.1:8012). Press Ctrl+C in the terminal to stop it. It does not generate sample data or contact Google automatically.
@@ -57,23 +66,23 @@ The launcher finds the project virtual environment, verifies the required tools,
 To use a different local port:
 
 ```bash
-GRADVOICE_PORT=8000 ./Web_version/start.sh
+GRADVOICE_PORT=8000 ./local_app/start.sh
 ```
 
 ## Production-style local build
 
 ```bash
-cd frontend
+cd local_app/frontend
 npm run build
 cd ..
 uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
 ```
 
-FastAPI serves the compiled React application at [http://localhost:8000](http://localhost:8000). Audio and database files remain local under `storage/` and `data/`.
+FastAPI serves the compiled React application at [http://localhost:8000](http://localhost:8000). Audio and database files remain local under `local_app/storage/` and `local_app/data/`.
 
 ## CSV format
 
-See `sample-data/students.csv`. Required columns are `student_id` and `display_name`; other recognized columns are `native_name`, `language`, `phonetic_spelling`, `program`, and `announcement_text`.
+See `local_app/sample-data/students.csv`. Required columns are `student_id` and `display_name`; other recognized columns are `native_name`, `language`, `phonetic_spelling`, `program`, and `announcement_text`.
 
 The coworker's `StudentID,FirstName,LastName` roster is also accepted, with an optional `Pronunciation` column. IDs retain leading zeros. Imports update matching IDs and mark existing pronunciations for review; do not import a roster during a live ceremony.
 
@@ -82,7 +91,7 @@ The coworker's `StudentID,FirstName,LastName` roster is also accepted, with an o
 Install the optional integrations in the same Python environment as FastAPI:
 
 ```bash
-pip install -r requirements-integrations.txt
+pip install -r local_app/requirements-integrations.txt
 ```
 
 Use a college-approved Google Cloud project with billing and the Cloud Text-to-Speech API enabled. Configure Application Default Credentials on the **backend computer**, not in React:
@@ -119,6 +128,7 @@ The detected `SCAN CDC` device on macOS commonly appears as `/dev/cu.usbmodemA_0
 The standalone bridge remains available as a diagnostic fallback:
 
 ```bash
+cd local_app
 python -m backend.scanner_bridge --list-ports
 python -m backend.scanner_bridge --port /dev/cu.usbmodemA_000001 --baud 9600 --ceremony 1
 ```
@@ -130,13 +140,27 @@ The source scripts in `../qr_code_scanner` were left unchanged. The web adapter 
 ## Verification
 
 ```bash
-pip install -r requirements.txt -r requirements-integrations.txt
-npm --prefix frontend run build
-python -m pytest backend/tests -q
+pip install -r local_app/requirements.txt -r local_app/requirements-integrations.txt
+npm --prefix local_app/frontend run build
+cd local_app && python -m pytest backend/tests -q
 ```
+
+## Portal package handoff
+
+The local app now has a manual handoff boundary for a future hosted student portal. In **Ceremonies**, select a ceremony and use **Export portal roster** to download a versioned ZIP package containing the ceremony profiles and currently active audio. Upload that package to the hosted portal for student self-service work. After staff review and the deadline, download the portal's compatible package and use **Import portal package** on the local ceremony computer.
+
+The importer previews the student and audio counts before changing data, verifies every file checksum, matches records by `student_id`, preserves ceremony check-in and queue state, creates new local audio candidates, and records an audit event. It does not merge live databases or require internet access during the ceremony. Keep the package transfer on approved encrypted storage and make a local backup before importing.
+
+The current package API is the local half of this design:
+
+- `GET /api/ceremonies/{id}/portal-package/export`
+- `POST /api/ceremonies/{id}/portal-package/preview`
+- `POST /api/ceremonies/{id}/portal-package/import`
+
+The initial hosted portal scaffold is in [student_portal](student_portal). It includes roster ingestion, development invitation tokens, student audio submissions, and staff review API endpoints. Approved-submission package export, institutional SSO, and production deployment hardening are still next. The portal should use `student_id` as its stable external identifier and should never use the local QR token as a login credential.
 
 Tests use temporary databases and mock Google responses; they do not spend credits or transmit real student records. Rehearse live voice quality, QR print scanning, speaker output, and the physical serial reader before ceremony use.
 
 ## Current boundary
 
-This is still a trusted-local prototype: it does not yet include authentication, student login, institutional SSO, or signed ceremony-package synchronization. Keep it bound to `127.0.0.1`; do not expose it publicly or to an untrusted network. Access to the API currently permits student-data changes and Google generation charges. Use one stage operator; cross-device playback locking and full ceremony recovery are not implemented. Audio normalization and student reference recording/voice conversion remain future work.
+The local ceremony app remains a trusted-local prototype and should stay bound to `127.0.0.1`. The portal's development token authentication is not suitable for public deployment; configure institutional SSO, HTTPS, PostgreSQL/object storage, backups, and approved secret management before hosting it. Use one stage operator; cross-device playback locking and full ceremony recovery are not implemented. Audio normalization and student reference recording/voice conversion remain future work.

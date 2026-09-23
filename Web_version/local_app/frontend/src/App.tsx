@@ -301,6 +301,8 @@ function Ceremonies({ ceremonies, selectedCeremonyId, reload, setSelected, setNo
   const [form, setForm] = useState({ name: '', event_date: '', location: '' })
   const [createError, setCreateError] = useState('')
   const [creating, setCreating] = useState(false)
+  const [packageBusy, setPackageBusy] = useState(false)
+  const packageRef = useRef<HTMLInputElement>(null)
   const loadDetail = (id: number) => api.get<CeremonyDetail>(`/api/ceremonies/${id}`).then(setDetail).catch((e) => setNotice(e.message))
   useEffect(() => { if (selectedCeremonyId) void loadDetail(selectedCeremonyId); else setDetail(null) }, [selectedCeremonyId])
   const create = async (event: React.FormEvent) => {
@@ -344,8 +346,37 @@ function Ceremonies({ ceremonies, selectedCeremonyId, reload, setSelected, setNo
   }
   const closeCeremonyModal = () => { if (!creating) { setShowCreate(false); setEditingCeremony(null); setCreateError(''); setForm({ name: '', event_date: '', location: '' }) } }
   const reloadCeremony = async () => { await reload(); if (detail) await loadDetail(detail.id) }
+  const downloadPortalPackage = async () => {
+    if (!detail) return
+    setPackageBusy(true)
+    try {
+      const response = await fetch(`/api/ceremonies/${detail.id}/portal-package/export`)
+      if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || response.statusText)
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a'); link.href = url; link.download = `gradvoice-portal-${detail.event_date}-${detail.id}.zip`; link.click(); URL.revokeObjectURL(url)
+      setNotice(`Exported the portal roster for ${detail.name}.`)
+    } catch (error) { setNotice((error as Error).message) } finally { setPackageBusy(false) }
+  }
+  const importPortalPackage = async (file?: File) => {
+    if (!detail || !file) return
+    setPackageBusy(true)
+    try {
+      const previewData = new FormData(); previewData.append('file', file)
+      const previewResponse = await fetch(`/api/ceremonies/${detail.id}/portal-package/preview`, { method: 'POST', body: previewData })
+      const preview = await previewResponse.json()
+      if (!previewResponse.ok) throw new Error(preview.detail || previewResponse.statusText)
+      const includedAudio = preview.students.filter((student: { audio: string }) => student.audio === 'included').length
+      if (!window.confirm(`Import ${preview.students.length} portal profile${preview.students.length === 1 ? '' : 's'} and ${includedAudio} audio file${includedAudio === 1 ? '' : 's'} into ${detail.name}?`)) return
+      const importData = new FormData(); importData.append('file', file); importData.append('activate_audio', 'true')
+      const importResponse = await fetch(`/api/ceremonies/${detail.id}/portal-package/import`, { method: 'POST', body: importData })
+      const result = await importResponse.json()
+      if (!importResponse.ok) throw new Error(result.detail || importResponse.statusText)
+      await reloadCeremony()
+      setNotice(`Imported ${result.imported} portal profile${result.imported === 1 ? '' : 's'} and ${result.audio_imported} audio file${result.audio_imported === 1 ? '' : 's'}.`)
+    } catch (error) { setNotice((error as Error).message) } finally { setPackageBusy(false); if (packageRef.current) packageRef.current.value = '' }
+  }
   return <>
-    <div className="page-heading"><div><p className="eyebrow">EVENT PLANNING</p><h2>Ceremonies</h2><p>Organize graduates and confirm every announcement is ready.</p></div><button className="primary" onClick={() => { setCreateError(''); setShowCreate(true) }}>+ New ceremony</button></div>
+    <div className="page-heading"><div><p className="eyebrow">EVENT PLANNING</p><h2>Ceremonies</h2><p>Organize graduates and confirm every announcement is ready.</p></div><div className="heading-actions"><button className="secondary" disabled={!detail || packageBusy} onClick={downloadPortalPackage}>Export portal roster</button><input ref={packageRef} type="file" accept=".zip" hidden onChange={(event) => importPortalPackage(event.target.files?.[0])} /><button className="secondary" disabled={!detail || packageBusy} onClick={() => packageRef.current?.click()}>Import portal package</button><button className="primary" onClick={() => { setCreateError(''); setShowCreate(true) }}>+ New ceremony</button></div></div>
     {detail && <p><a href={`/api/ceremonies/${detail.id}/qr-cards`} target="_blank" rel="noreferrer">Open printable QR cards for {detail.name}</a></p>}
     <div className="ceremony-grid">
       <section className="ceremony-list">{ceremonies.map((ceremony) => <button key={ceremony.id} className={detail?.id === ceremony.id ? 'ceremony-card selected' : 'ceremony-card'} onClick={() => { loadDetail(ceremony.id); setSelected(ceremony.id) }}><span className="date-tile"><b>{new Date(`${ceremony.event_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</b><strong>{new Date(`${ceremony.event_date}T12:00:00`).getDate()}</strong></span><div><strong>{ceremony.name}</strong><small>{ceremony.location || 'Location not set'}</small><small>{ceremony.student_count} students</small></div><span>→</span></button>)}</section>
