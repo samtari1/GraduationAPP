@@ -85,7 +85,8 @@ main { grid-column: 2; min-width: 0; }.topbar { height: 91px; background: rgba(2
 .header-icon-button { display: grid; place-items: center; width: 34px; height: 34px; padding: 0; border: 1px solid #d6d1c4; border-radius: 7px; background: #b89535; color: white; font-size: 23px; font-weight: 500; line-height: 1; cursor: pointer; }.header-icon-button:hover { background: #9e7c25; }
 .ceremony-actions { justify-content: flex-end; margin-bottom: 16px; }
 .page-status-only { justify-content: flex-end; margin-bottom: 12px; }
-.ceremony-single { grid-template-columns: 1fr; }
+.ceremony-single { grid-template-columns: minmax(0, 1fr); width: 100%; }
+.ceremony-single .ceremony-detail { width: 100%; }
 .ceremony-title-row { display: flex; align-items: center; gap: 14px; }
 .ceremony-title-row .date-tile { flex: none; }
 .ceremony-meta { display: block; margin-top: 7px; color: #7c8783; }
@@ -96,4 +97,5 @@ main { grid-column: 2; min-width: 0; }.topbar { height: 91px; background: rgba(2
 @media (max-width: 740px) { .ceremony-title-row { align-items: flex-start; } }
 .stage-roster-row { grid-template-columns: 28px minmax(0,1fr) 82px auto; gap: 8px; padding-left: 14px; padding-right: 14px; }
 @media (min-width: 1001px) { .ceremony-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.ceremony-grid.ceremony-single { grid-template-columns: minmax(0, 1fr); }
 .queue-list { min-height: 0; max-height: 430px; overflow-y: auto; }
