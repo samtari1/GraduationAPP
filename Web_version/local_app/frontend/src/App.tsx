@@ -1,95 +1,123 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import PronunciationTools, { languageDisplayName } from './PronunciationTools'
-import { api } from './api'
-import type { AuditEvent, Ceremony, CeremonyDetail, DashboardStats, Entry, Student } from './types'
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import PronunciationTools, { languageDisplayName } from "./PronunciationTools";
+import { api } from "./api";
+import type {
+  AuditEvent,
+  Ceremony,
+  CeremonyDetail,
+  DashboardStats,
+  Entry,
+  Student,
+} from "./types";
 
-type View = 'dashboard' | 'ceremonies' | 'checkin' | 'control'
+type View = "dashboard" | "ceremonies" | "checkin" | "control";
 
 const navItems: { id: View; label: string; glyph: string }[] = [
-  { id: 'dashboard', label: 'Overview', glyph: '▦' },
-  { id: 'ceremonies', label: 'Ceremonies', glyph: '◇' },
-  { id: 'checkin', label: 'Check-in', glyph: '✓' },
-  { id: 'control', label: 'Stage control', glyph: '▶' },
-]
+  { id: "dashboard", label: "Overview", glyph: "▦" },
+  { id: "ceremonies", label: "Ceremonies", glyph: "◇" },
+  { id: "checkin", label: "Check-in", glyph: "✓" },
+  { id: "control", label: "Stage control", glyph: "▶" },
+];
 
 const viewPaths: Record<View, string> = {
-  dashboard: '/',
-  ceremonies: '/ceremonies',
-  checkin: '/check-in',
-  control: '/stage-control',
-}
+  dashboard: "/",
+  ceremonies: "/ceremonies",
+  checkin: "/check-in",
+  control: "/stage-control",
+};
 
 const viewFromPath = (pathname: string): View => {
-  const normalized = pathname.replace(/\/+$/, '') || '/'
-  if (normalized === '/students') return 'ceremonies'
-  const match = (Object.entries(viewPaths) as [View, string][]).find(([, path]) => path === normalized)
-  return match?.[0] ?? 'dashboard'
-}
+  const normalized = pathname.replace(/\/+$/, "") || "/";
+  if (normalized === "/students") return "ceremonies";
+  const match = (Object.entries(viewPaths) as [View, string][]).find(
+    ([, path]) => path === normalized,
+  );
+  return match?.[0] ?? "dashboard";
+};
 
-const statusLabel = (value: string) => value.replaceAll('_', ' ')
+const statusLabel = (value: string) => value.replaceAll("_", " ");
 
 const pronunciationSource = (student: Student) => {
-  if (!student.active_audio) return 'Not selected'
-  if (!student.active_audio.generation_input) return 'Uploaded recording'
+  if (!student.active_audio) return "Not selected";
+  if (!student.active_audio.generation_input) return "Uploaded recording";
   try {
-    return JSON.parse(student.active_audio.generation_input).text_source || 'Custom text'
+    return (
+      JSON.parse(student.active_audio.generation_input).text_source ||
+      "Custom text"
+    );
   } catch {
-    return 'Custom text'
+    return "Custom text";
   }
-}
+};
 
 function App() {
-  const [view, setView] = useState<View>(() => viewFromPath(window.location.pathname))
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => localStorage.getItem('gradvoice.sidebarCollapsed') === 'true')
-  const [ceremonies, setCeremonies] = useState<Ceremony[]>([])
-  const [selectedCeremonyId, setSelectedCeremonyId] = useState<number | null>(null)
-  const [notice, setNotice] = useState<string>('')
-  const [newCeremonyRequest, setNewCeremonyRequest] = useState(0)
-  const selectedCeremony = ceremonies.find((ceremony) => ceremony.id === selectedCeremonyId)
+  const [view, setView] = useState<View>(() =>
+    viewFromPath(window.location.pathname),
+  );
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(
+    () => localStorage.getItem("gradvoice.sidebarCollapsed") === "true",
+  );
+  const [ceremonies, setCeremonies] = useState<Ceremony[]>([]);
+  const [selectedCeremonyId, setSelectedCeremonyId] = useState<number | null>(
+    null,
+  );
+  const [notice, setNotice] = useState<string>("");
+  const [newCeremonyRequest, setNewCeremonyRequest] = useState(0);
+  const selectedCeremony = ceremonies.find(
+    (ceremony) => ceremony.id === selectedCeremonyId,
+  );
 
   const loadCore = async () => {
-    const ceremonyData = await api.get<Ceremony[]>('/api/ceremonies')
-    setCeremonies(ceremonyData)
-    setSelectedCeremonyId((current) => current ?? ceremonyData[0]?.id ?? null)
-  }
+    const ceremonyData = await api.get<Ceremony[]>("/api/ceremonies");
+    setCeremonies(ceremonyData);
+    setSelectedCeremonyId((current) => current ?? ceremonyData[0]?.id ?? null);
+  };
 
   useEffect(() => {
-    loadCore().catch((error) => setNotice(error.message))
-  }, [])
+    loadCore().catch((error) => setNotice(error.message));
+  }, []);
 
   useEffect(() => {
     const handleHistoryNavigation = () => {
-      setView(viewFromPath(window.location.pathname))
-      setNotice('')
-    }
-    window.addEventListener('popstate', handleHistoryNavigation)
-    return () => window.removeEventListener('popstate', handleHistoryNavigation)
-  }, [])
+      setView(viewFromPath(window.location.pathname));
+      setNotice("");
+    };
+    window.addEventListener("popstate", handleHistoryNavigation);
+    return () =>
+      window.removeEventListener("popstate", handleHistoryNavigation);
+  }, []);
 
   useEffect(() => {
-    const label = navItems.find((item) => item.id === view)?.label ?? 'GradVoice'
-    document.title = `${label} | GradVoice`
-  }, [view])
+    const label =
+      navItems.find((item) => item.id === view)?.label ?? "GradVoice";
+    document.title = `${label} | GradVoice`;
+  }, [view]);
 
   useEffect(() => {
-    localStorage.setItem('gradvoice.sidebarCollapsed', String(sidebarCollapsed))
-  }, [sidebarCollapsed])
+    localStorage.setItem(
+      "gradvoice.sidebarCollapsed",
+      String(sidebarCollapsed),
+    );
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
-    if (!notice) return
-    const timeout = window.setTimeout(() => setNotice(''), 2500)
-    return () => window.clearTimeout(timeout)
-  }, [notice])
+    if (!notice) return;
+    const timeout = window.setTimeout(() => setNotice(""), 2500);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   const navigate = (target: View) => {
-    const path = viewPaths[target]
-    if (window.location.pathname !== path) window.history.pushState({ view: target }, '', path)
-    setView(target)
-    setNotice('')
-  }
+    const path = viewPaths[target];
+    if (window.location.pathname !== path)
+      window.history.pushState({ view: target }, "", path);
+    setView(target);
+    setNotice("");
+  };
 
   return (
-    <div className={sidebarCollapsed ? 'app-shell sidebar-collapsed' : 'app-shell'}>
+    <div
+      className={sidebarCollapsed ? "app-shell sidebar-collapsed" : "app-shell"}
+    >
       <aside className="sidebar" aria-label="Application sidebar">
         <div className="brand">
           <div className="brand-mark">G</div>
@@ -101,579 +129,2573 @@ function App() {
             className="sidebar-toggle"
             type="button"
             onClick={() => setSidebarCollapsed((current) => !current)}
-            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            aria-label={
+              sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"
+            }
             aria-expanded={!sidebarCollapsed}
-            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            title={sidebarCollapsed ? "Expand sidebar" : "Collapse sidebar"}
           >
-            {sidebarCollapsed ? '›' : '‹'}
+            {sidebarCollapsed ? "›" : "‹"}
           </button>
         </div>
         <nav aria-label="Main navigation">
           {navItems.map((item) => (
-            <button className={view === item.id ? 'nav-item active' : 'nav-item'} onClick={() => navigate(item.id)} key={item.id} title={sidebarCollapsed ? item.label : undefined} aria-label={item.label}>
-              <span className="nav-glyph">{item.glyph}</span><span className="nav-label">{item.label}</span>
+            <button
+              className={view === item.id ? "nav-item active" : "nav-item"}
+              onClick={() => navigate(item.id)}
+              key={item.id}
+              title={sidebarCollapsed ? item.label : undefined}
+              aria-label={item.label}
+            >
+              <span className="nav-glyph">{item.glyph}</span>
+              <span className="nav-label">{item.label}</span>
             </button>
           ))}
         </nav>
         <div className="offline-card">
           <span className="live-dot" />
-          <div><strong>Offline ready</strong><small>Local database connected</small></div>
+          <div>
+            <strong>Offline ready</strong>
+            <small>Local database connected</small>
+          </div>
         </div>
       </aside>
       <main>
         <header className="topbar">
-          {view === 'ceremonies' ? <div className="topbar-context"><p className="eyebrow">EVENT PLANNING</p><h1>Ceremonies</h1><small>Organize graduates and confirm every announcement is ready.</small></div> : view === 'checkin' ? <div className="topbar-context"><p className="eyebrow">ARRIVAL STATION</p><h1>Student check-in</h1><small>First scans establish the default procession order and pronounce the matched student's name for confirmation.</small></div> : view === 'control' ? <div className="topbar-context"><p className="eyebrow">LIVE CEREMONY MODE · CEREMONY ID {selectedCeremonyId ?? '—'}</p><h1>{selectedCeremony?.name ?? 'Loading…'}</h1></div> : <p className="eyebrow">Sandhills Community College</p>}
+          {view === "ceremonies" ? (
+            <div className="topbar-context">
+              <p className="eyebrow">EVENT PLANNING</p>
+              <h1>Ceremonies</h1>
+              <small>
+                Organize graduates and confirm every announcement is ready.
+              </small>
+            </div>
+          ) : view === "checkin" ? (
+            <div className="topbar-context">
+              <p className="eyebrow">ARRIVAL STATION</p>
+              <h1>Student check-in</h1>
+              <small>
+                First scans establish the default procession order and pronounce
+                the matched student's name for confirmation.
+              </small>
+            </div>
+          ) : view === "control" ? (
+            <div className="topbar-context">
+              <p className="eyebrow">
+                LIVE CEREMONY MODE · CEREMONY ID {selectedCeremonyId ?? "—"}
+              </p>
+              <h1>{selectedCeremony?.name ?? "Loading…"}</h1>
+            </div>
+          ) : (
+            <p className="eyebrow">Sandhills Community College</p>
+          )}
           <div className="top-actions">
             <select
               aria-label="Active ceremony"
-              value={selectedCeremonyId ?? ''}
-              onChange={(event) => setSelectedCeremonyId(Number(event.target.value))}
+              value={selectedCeremonyId ?? ""}
+              onChange={(event) =>
+                setSelectedCeremonyId(Number(event.target.value))
+              }
             >
               <option value="">Select a ceremony</option>
-              {ceremonies.map((ceremony) => <option value={ceremony.id} key={ceremony.id}>{ceremony.name}</option>)}
+              {ceremonies.map((ceremony) => (
+                <option value={ceremony.id} key={ceremony.id}>
+                  {ceremony.name}
+                </option>
+              ))}
             </select>
-            {view === 'ceremonies' && <button className="header-icon-button" type="button" aria-label="New ceremony" title="New ceremony" onClick={() => setNewCeremonyRequest((current) => current + 1)}>+</button>}
-            <button className="avatar" title="Local administrator">AD</button>
+            {view === "ceremonies" && (
+              <button
+                className="header-icon-button"
+                type="button"
+                aria-label="New ceremony"
+                title="New ceremony"
+                onClick={() => setNewCeremonyRequest((current) => current + 1)}
+              >
+                +
+              </button>
+            )}
+            <button className="avatar" title="Local administrator">
+              AD
+            </button>
           </div>
         </header>
-        {notice && <div className="notice" role="alert">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
+        {notice && (
+          <div className="notice" role="alert">
+            {notice}
+            <button onClick={() => setNotice("")}>Dismiss</button>
+          </div>
+        )}
         <div className="page">
-          {view === 'dashboard' && <Dashboard onNavigate={navigate} selectedCeremonyId={selectedCeremonyId} />}
-          {view === 'ceremonies' && <Ceremonies ceremonies={ceremonies} selectedCeremonyId={selectedCeremonyId} newCeremonyRequest={newCeremonyRequest} reload={loadCore} setSelected={setSelectedCeremonyId} setNotice={setNotice} />}
-          {view === 'checkin' && <CheckIn ceremonyId={selectedCeremonyId} setNotice={setNotice} />}
-          {view === 'control' && <StageControl ceremonyId={selectedCeremonyId} setNotice={setNotice} />}
+          {view === "dashboard" && (
+            <Dashboard
+              onNavigate={navigate}
+              selectedCeremonyId={selectedCeremonyId}
+            />
+          )}
+          {view === "ceremonies" && (
+            <Ceremonies
+              ceremonies={ceremonies}
+              selectedCeremonyId={selectedCeremonyId}
+              newCeremonyRequest={newCeremonyRequest}
+              reload={loadCore}
+              setSelected={setSelectedCeremonyId}
+              setNotice={setNotice}
+            />
+          )}
+          {view === "checkin" && (
+            <CheckIn ceremonyId={selectedCeremonyId} setNotice={setNotice} />
+          )}
+          {view === "control" && (
+            <StageControl
+              ceremonyId={selectedCeremonyId}
+              setNotice={setNotice}
+            />
+          )}
         </div>
       </main>
     </div>
-  )
+  );
 }
 
-function Dashboard({ onNavigate, selectedCeremonyId }: { onNavigate: (view: View) => void; selectedCeremonyId: number | null }) {
-  const [stats, setStats] = useState<DashboardStats | null>(null)
-  const [audit, setAudit] = useState<AuditEvent[]>([])
-  const [readiness, setReadiness] = useState<{ ready: boolean; total: number; issue_count: number } | null>(null)
+function Dashboard({
+  onNavigate,
+  selectedCeremonyId,
+}: {
+  onNavigate: (view: View) => void;
+  selectedCeremonyId: number | null;
+}) {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [audit, setAudit] = useState<AuditEvent[]>([]);
+  const [readiness, setReadiness] = useState<{
+    ready: boolean;
+    total: number;
+    issue_count: number;
+  } | null>(null);
 
   useEffect(() => {
-    api.get<DashboardStats>('/api/dashboard').then(setStats)
-    api.get<AuditEvent[]>('/api/audit?limit=6').then(setAudit)
-    if (selectedCeremonyId) api.get(`/api/ceremonies/${selectedCeremonyId}/readiness`).then((value) => setReadiness(value as typeof readiness))
-  }, [selectedCeremonyId])
+    api.get<DashboardStats>("/api/dashboard").then(setStats);
+    api.get<AuditEvent[]>("/api/audit?limit=6").then(setAudit);
+    if (selectedCeremonyId)
+      api
+        .get(`/api/ceremonies/${selectedCeremonyId}/readiness`)
+        .then((value) => setReadiness(value as typeof readiness));
+  }, [selectedCeremonyId]);
 
-  return <>
-    <section className="hero">
-      <div>
-        <p className="eyebrow light">CEREMONY COMMAND CENTER</p>
-        <h2>Every name, spoken with care.</h2>
-        <p>Prepare pronunciations, organize the procession, and run graduation confidently—even without internet.</p>
+  return (
+    <>
+      <section className="hero">
+        <div>
+          <p className="eyebrow light">CEREMONY COMMAND CENTER</p>
+          <h2>Every name, spoken with care.</h2>
+          <p>
+            Prepare pronunciations, organize the procession, and run graduation
+            confidently—even without internet.
+          </p>
+        </div>
+        <button
+          className="primary light-button"
+          onClick={() => onNavigate("control")}
+        >
+          Open stage control <span>→</span>
+        </button>
+      </section>
+      <section className="stats-grid">
+        <Stat
+          label="Graduating students"
+          value={stats?.students ?? "—"}
+          detail={`${stats?.with_audio ?? 0} have approved audio`}
+        />
+        <Stat
+          label="Pronunciations approved"
+          value={stats?.approved ?? "—"}
+          detail={`${stats?.needs_attention ?? 0} need attention`}
+          tone="gold"
+        />
+        <Stat
+          label="Active ceremonies"
+          value={stats?.ceremonies ?? "—"}
+          detail="Local ceremony database"
+        />
+        <Stat
+          label="Ceremony readiness"
+          value={
+            readiness?.ready
+              ? "Ready"
+              : readiness
+                ? `${readiness.issue_count} issues`
+                : "—"
+          }
+          detail={
+            readiness
+              ? `${readiness.total} assigned students`
+              : "Select a ceremony"
+          }
+          tone={readiness?.ready ? "green" : "red"}
+        />
+      </section>
+      <div className="two-column">
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">WORKFLOW</p>
+              <h3>Preparation checklist</h3>
+            </div>
+          </div>
+          <div className="checklist">
+            <button onClick={() => onNavigate("ceremonies")}>
+              <span>01</span>
+              <div>
+                <strong>Create or select a ceremony</strong>
+                <small>Keep each graduating class in its own ceremony</small>
+              </div>
+              <b>→</b>
+            </button>
+            <button onClick={() => onNavigate("ceremonies")}>
+              <span>02</span>
+              <div>
+                <strong>Import and review graduates</strong>
+                <small>
+                  Manage names, languages, and audio within the ceremony
+                </small>
+              </div>
+              <b>→</b>
+            </button>
+            <button onClick={() => onNavigate("ceremonies")}>
+              <span>03</span>
+              <div>
+                <strong>Confirm ceremony order</strong>
+                <small>Review the roster and readiness</small>
+              </div>
+              <b>→</b>
+            </button>
+            <button onClick={() => onNavigate("control")}>
+              <span>04</span>
+              <div>
+                <strong>Rehearse stage controls</strong>
+                <small>Test scanning, queueing, and speaker output</small>
+              </div>
+              <b>→</b>
+            </button>
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">AUDIT TRAIL</p>
+              <h3>Recent activity</h3>
+            </div>
+          </div>
+          <div className="activity-list">
+            {audit.length === 0 && (
+              <p className="empty">Activity will appear here.</p>
+            )}
+            {audit.map((event) => (
+              <div className="activity" key={event.id}>
+                <span className="activity-icon">✓</span>
+                <div>
+                  <strong>{event.message}</strong>
+                  <small>{new Date(event.created_at).toLocaleString()}</small>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
       </div>
-      <button className="primary light-button" onClick={() => onNavigate('control')}>Open stage control <span>→</span></button>
-    </section>
-    <section className="stats-grid">
-      <Stat label="Graduating students" value={stats?.students ?? '—'} detail={`${stats?.with_audio ?? 0} have approved audio`} />
-      <Stat label="Pronunciations approved" value={stats?.approved ?? '—'} detail={`${stats?.needs_attention ?? 0} need attention`} tone="gold" />
-      <Stat label="Active ceremonies" value={stats?.ceremonies ?? '—'} detail="Local ceremony database" />
-      <Stat label="Ceremony readiness" value={readiness?.ready ? 'Ready' : readiness ? `${readiness.issue_count} issues` : '—'} detail={readiness ? `${readiness.total} assigned students` : 'Select a ceremony'} tone={readiness?.ready ? 'green' : 'red'} />
-    </section>
-    <div className="two-column">
-      <section className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">WORKFLOW</p><h3>Preparation checklist</h3></div></div>
-        <div className="checklist">
-          <button onClick={() => onNavigate('ceremonies')}><span>01</span><div><strong>Create or select a ceremony</strong><small>Keep each graduating class in its own ceremony</small></div><b>→</b></button>
-          <button onClick={() => onNavigate('ceremonies')}><span>02</span><div><strong>Import and review graduates</strong><small>Manage names, languages, and audio within the ceremony</small></div><b>→</b></button>
-          <button onClick={() => onNavigate('ceremonies')}><span>03</span><div><strong>Confirm ceremony order</strong><small>Review the roster and readiness</small></div><b>→</b></button>
-          <button onClick={() => onNavigate('control')}><span>04</span><div><strong>Rehearse stage controls</strong><small>Test scanning, queueing, and speaker output</small></div><b>→</b></button>
-        </div>
-      </section>
-      <section className="panel">
-        <div className="panel-heading"><div><p className="eyebrow">AUDIT TRAIL</p><h3>Recent activity</h3></div></div>
-        <div className="activity-list">
-          {audit.length === 0 && <p className="empty">Activity will appear here.</p>}
-          {audit.map((event) => <div className="activity" key={event.id}><span className="activity-icon">✓</span><div><strong>{event.message}</strong><small>{new Date(event.created_at).toLocaleString()}</small></div></div>)}
-        </div>
-      </section>
-    </div>
-  </>
+    </>
+  );
 }
 
-function Stat({ label, value, detail, tone = '' }: { label: string; value: string | number; detail: string; tone?: string }) {
-  return <article className={`stat-card ${tone}`}><p>{label}</p><strong>{value}</strong><small>{detail}</small></article>
+function Stat({
+  label,
+  value,
+  detail,
+  tone = "",
+}: {
+  label: string;
+  value: string | number;
+  detail: string;
+  tone?: string;
+}) {
+  return (
+    <article className={`stat-card ${tone}`}>
+      <p>{label}</p>
+      <strong>{value}</strong>
+      <small>{detail}</small>
+    </article>
+  );
 }
 
-function Students({ ceremonyId, students, pronunciationAudioUploadEnabled, reload, setNotice }: { ceremonyId: number; students: Student[]; pronunciationAudioUploadEnabled: boolean; reload: () => Promise<void>; setNotice: (value: string) => void }) {
-  const [search, setSearch] = useState('')
-  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
-  const [editing, setEditing] = useState<Student | null>(null)
-  const [showAdd, setShowAdd] = useState(false)
-  const [deleting, setDeleting] = useState(false)
-  const importRef = useRef<HTMLInputElement>(null)
-  const filtered = useMemo(() => students.filter((student) => `${student.display_name} ${student.student_id} ${student.program}`.toLowerCase().includes(search.toLowerCase())), [students, search])
-  const visibleIds = filtered.map((student) => student.id)
-  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id))
+function Students({
+  ceremonyId,
+  students,
+  pronunciationAudioUploadEnabled,
+  reload,
+  setNotice,
+}: {
+  ceremonyId: number;
+  students: Student[];
+  pronunciationAudioUploadEnabled: boolean;
+  reload: () => Promise<void>;
+  setNotice: (value: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+  const [editing, setEditing] = useState<Student | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const importRef = useRef<HTMLInputElement>(null);
+  const filtered = useMemo(
+    () =>
+      students.filter((student) =>
+        `${student.display_name} ${student.student_id} ${student.program}`
+          .toLowerCase()
+          .includes(search.toLowerCase()),
+      ),
+    [students, search],
+  );
+  const visibleIds = filtered.map((student) => student.id);
+  const allVisibleSelected =
+    visibleIds.length > 0 && visibleIds.every((id) => selectedIds.has(id));
 
   const importCsv = async (file?: File) => {
-    if (!file) return
-    const form = new FormData(); form.append('file', file)
+    if (!file) return;
+    const form = new FormData();
+    form.append("file", file);
     try {
-      const result = await api.post<{ created: number; updated: number; skipped: number }>(`/api/ceremonies/${ceremonyId}/students/import`, form)
-      setNotice(`Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.`)
-      await reload()
-    } catch (error) { setNotice((error as Error).message) }
-    if (importRef.current) importRef.current.value = ''
-  }
+      const result = await api.post<{
+        created: number;
+        updated: number;
+        skipped: number;
+      }>(`/api/ceremonies/${ceremonyId}/students/import`, form);
+      setNotice(
+        `Import complete: ${result.created} created, ${result.updated} updated, ${result.skipped} skipped.`,
+      );
+      await reload();
+    } catch (error) {
+      setNotice((error as Error).message);
+    }
+    if (importRef.current) importRef.current.value = "";
+  };
 
   const exportCsv = () => {
-    const headers = ['student_id', 'display_name', 'native_name', 'phonetic_spelling', 'program', 'announcement_text']
-    const escapeCsv = (value: string | null) => `"${(value ?? '').replaceAll('"', '""')}"`
-    const rows = students.map((student) => [student.student_id, student.display_name, student.native_name, student.phonetic_spelling, student.program, student.announcement_text].map(escapeCsv).join(','))
-    const csv = `\uFEFF${headers.join(',')}\n${rows.join('\n')}\n`
-    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
-    const link = document.createElement('a')
-    link.href = url
-    link.download = `ceremony-${ceremonyId}-students.csv`
-    link.click()
-    URL.revokeObjectURL(url)
-    setNotice(`Exported ${students.length} student${students.length === 1 ? '' : 's'} to CSV.`)
-  }
+    const headers = [
+      "student_id",
+      "display_name",
+      "native_name",
+      "phonetic_spelling",
+      "program",
+      "announcement_text",
+    ];
+    const escapeCsv = (value: string | null) =>
+      `"${(value ?? "").replaceAll('"', '""')}"`;
+    const rows = students.map((student) =>
+      [
+        student.student_id,
+        student.display_name,
+        student.native_name,
+        student.phonetic_spelling,
+        student.program,
+        student.announcement_text,
+      ]
+        .map(escapeCsv)
+        .join(","),
+    );
+    const csv = `\uFEFF${headers.join(",")}\n${rows.join("\n")}\n`;
+    const url = URL.createObjectURL(
+      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `ceremony-${ceremonyId}-students.csv`;
+    link.click();
+    URL.revokeObjectURL(url);
+    setNotice(
+      `Exported ${students.length} student${students.length === 1 ? "" : "s"} to CSV.`,
+    );
+  };
 
   const selectVisible = (selected: boolean) => {
     setSelectedIds((current) => {
-      const next = new Set(current)
-      visibleIds.forEach((id) => selected ? next.add(id) : next.delete(id))
-      return next
-    })
-  }
+      const next = new Set(current);
+      visibleIds.forEach((id) => (selected ? next.add(id) : next.delete(id)));
+      return next;
+    });
+  };
 
   const deleteSelected = async () => {
-    const selectedStudents = students.filter((student) => selectedIds.has(student.id))
-    if (!selectedStudents.length || !window.confirm(`Delete ${selectedStudents.length} selected student${selectedStudents.length === 1 ? '' : 's'}? This will remove their ceremony records and audio.`)) return
-    setDeleting(true)
+    const selectedStudents = students.filter((student) =>
+      selectedIds.has(student.id),
+    );
+    if (
+      !selectedStudents.length ||
+      !window.confirm(
+        `Delete ${selectedStudents.length} selected student${selectedStudents.length === 1 ? "" : "s"}? This will remove their ceremony records and audio.`,
+      )
+    )
+      return;
+    setDeleting(true);
     try {
-      await Promise.all(selectedStudents.map((student) => api.delete(`/api/students/${student.id}`)))
-      setSelectedIds(new Set())
-      setNotice(`${selectedStudents.length} student${selectedStudents.length === 1 ? '' : 's'} deleted.`)
-      await reload()
+      await Promise.all(
+        selectedStudents.map((student) =>
+          api.delete(`/api/students/${student.id}`),
+        ),
+      );
+      setSelectedIds(new Set());
+      setNotice(
+        `${selectedStudents.length} student${selectedStudents.length === 1 ? "" : "s"} deleted.`,
+      );
+      await reload();
     } catch (error) {
-      setNotice((error as Error).message)
+      setNotice((error as Error).message);
     } finally {
-      setDeleting(false)
+      setDeleting(false);
     }
-  }
+  };
 
-  return <>
-    <div className="page-heading ceremony-students-heading"><div><h2>Student pronunciation records</h2><small className="csv-format-note">CSV headers can be in any order. Required: <strong>student_id</strong>, <strong>display_name</strong>. Optional: <strong>native_name</strong>, <strong>language</strong>, <strong>phonetic_spelling</strong>, <strong>program</strong>, <strong>announcement_text</strong>.</small></div><div className="heading-actions"><input ref={importRef} type="file" accept=".csv" hidden onChange={(e) => importCsv(e.target.files?.[0])} /><button className="secondary" onClick={exportCsv}>Export Students to CSV</button><button className="secondary" onClick={() => importRef.current?.click()}>Import CSV</button><button className="primary" onClick={() => setShowAdd(true)}>+ Add student</button></div></div>
-    <section className="panel table-panel">
-      <div className="table-tools"><label className="search"><span>⌕</span><input placeholder="Search by name, ID, or program" value={search} onChange={(e) => setSearch(e.target.value)} /></label><span>{filtered.length} students</span><div className="selection-actions"><button className="secondary" type="button" disabled={!visibleIds.length} onClick={() => selectVisible(true)}>Select all</button><button className="secondary" type="button" disabled={!selectedIds.size} onClick={() => selectVisible(false)}>Deselect all</button><button className="danger-button" type="button" disabled={!selectedIds.size || deleting} onClick={deleteSelected}>{deleting ? 'Deleting…' : `Delete selected${selectedIds.size ? ` (${selectedIds.size})` : ''}`}</button></div></div>
-      <div className="table-wrap"><table><thead><tr><th><input type="checkbox" aria-label={allVisibleSelected ? 'Deselect all visible students' : 'Select all visible students'} checked={allVisibleSelected} onChange={(event) => selectVisible(event.target.checked)} /></th><th>Student</th><th>Program</th><th>Pronunciation name</th><th>Status</th><th>Audio</th></tr></thead><tbody>
-        {filtered.map((student) => <tr key={student.id}><td><input type="checkbox" aria-label={`Select ${student.display_name}`} checked={selectedIds.has(student.id)} onChange={(event) => setSelectedIds((current) => { const next = new Set(current); if (event.target.checked) next.add(student.id); else next.delete(student.id); return next })} /></td><td><button type="button" className="student-name-button" onClick={() => setEditing(student)}><div className="student-cell"><span className="initials">{student.display_name.split(' ').slice(0,2).map((part) => part[0]).join('')}</span><div><strong>{student.display_name}</strong>{student.native_name && <small dir="auto">{student.native_name}</small>}<small>ID {student.student_id}</small></div></div></button></td><td>{student.program || <span className="muted">Not set</span>}</td><td>{pronunciationSource(student)}</td><td><span className={`badge ${student.pronunciation_status}`}>{statusLabel(student.pronunciation_status)}</span></td><td>{student.active_audio ? <button className="play-mini" onClick={() => new Audio(student.active_audio!.url).play()}>▶ Play</button> : <span className="muted">Missing</span>}</td></tr>)}
-      </tbody></table></div>
-    </section>
-    {(editing || showAdd) && <StudentModal ceremonyId={ceremonyId} student={editing} pronunciationAudioUploadEnabled={pronunciationAudioUploadEnabled} close={() => { setEditing(null); setShowAdd(false) }} reload={reload} setNotice={setNotice} />}
-  </>
+  return (
+    <>
+      <div className="page-heading ceremony-students-heading">
+        <div>
+          <h2>Student pronunciation records</h2>
+          <small className="csv-format-note">
+            CSV headers can be in any order.
+            <br />
+            Required: <strong>student_id</strong>, <strong>display_name</strong>
+            .<br />
+            Optional: <strong>native_name</strong>, <strong>language</strong>,{" "}
+            <strong>phonetic_spelling</strong>, <strong>program</strong>,{" "}
+            <strong>announcement_text</strong>.
+          </small>
+        </div>
+        <div className="heading-actions">
+          <input
+            ref={importRef}
+            type="file"
+            accept=".csv"
+            hidden
+            onChange={(e) => importCsv(e.target.files?.[0])}
+          />
+          <button className="secondary" onClick={exportCsv}>
+            Export Students to CSV
+          </button>
+          <button
+            className="secondary"
+            onClick={() => importRef.current?.click()}
+          >
+            Import CSV
+          </button>
+          <button className="primary" onClick={() => setShowAdd(true)}>
+            + Add student
+          </button>
+        </div>
+      </div>
+      <section className="panel table-panel">
+        <div className="table-tools">
+          <label className="search">
+            <span>⌕</span>
+            <input
+              placeholder="Search by name, ID, or program"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </label>
+          <span>{filtered.length} students</span>
+          <div className="selection-actions">
+            <button
+              className="secondary"
+              type="button"
+              disabled={!visibleIds.length}
+              onClick={() => selectVisible(true)}
+            >
+              Select all
+            </button>
+            <button
+              className="secondary"
+              type="button"
+              disabled={!selectedIds.size}
+              onClick={() => selectVisible(false)}
+            >
+              Deselect all
+            </button>
+            <button
+              className="danger-button"
+              type="button"
+              disabled={!selectedIds.size || deleting}
+              onClick={deleteSelected}
+            >
+              {deleting
+                ? "Deleting…"
+                : `Delete selected${selectedIds.size ? ` (${selectedIds.size})` : ""}`}
+            </button>
+          </div>
+        </div>
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    aria-label={
+                      allVisibleSelected
+                        ? "Deselect all visible students"
+                        : "Select all visible students"
+                    }
+                    checked={allVisibleSelected}
+                    onChange={(event) => selectVisible(event.target.checked)}
+                  />
+                </th>
+                <th>Student</th>
+                <th>Program</th>
+                <th>Pronunciation name</th>
+                <th>Status</th>
+                <th>Audio</th>
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map((student) => (
+                <tr key={student.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${student.display_name}`}
+                      checked={selectedIds.has(student.id)}
+                      onChange={(event) =>
+                        setSelectedIds((current) => {
+                          const next = new Set(current);
+                          if (event.target.checked) next.add(student.id);
+                          else next.delete(student.id);
+                          return next;
+                        })
+                      }
+                    />
+                  </td>
+                  <td>
+                    <button
+                      type="button"
+                      className="student-name-button"
+                      onClick={() => setEditing(student)}
+                    >
+                      <div className="student-cell">
+                        <span className="initials">
+                          {student.display_name
+                            .split(" ")
+                            .slice(0, 2)
+                            .map((part) => part[0])
+                            .join("")}
+                        </span>
+                        <div>
+                          <strong>{student.display_name}</strong>
+                          {student.native_name && (
+                            <small dir="auto">{student.native_name}</small>
+                          )}
+                          <small>ID {student.student_id}</small>
+                        </div>
+                      </div>
+                    </button>
+                  </td>
+                  <td>
+                    {student.program || <span className="muted">Not set</span>}
+                  </td>
+                  <td>{pronunciationSource(student)}</td>
+                  <td>
+                    <span className={`badge ${student.pronunciation_status}`}>
+                      {statusLabel(student.pronunciation_status)}
+                    </span>
+                  </td>
+                  <td>
+                    {student.active_audio ? (
+                      <button
+                        className="play-mini"
+                        onClick={() =>
+                          new Audio(student.active_audio!.url).play()
+                        }
+                      >
+                        ▶ Play
+                      </button>
+                    ) : (
+                      <span className="muted">Missing</span>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      {(editing || showAdd) && (
+        <StudentModal
+          ceremonyId={ceremonyId}
+          student={editing}
+          pronunciationAudioUploadEnabled={pronunciationAudioUploadEnabled}
+          close={() => {
+            setEditing(null);
+            setShowAdd(false);
+          }}
+          reload={reload}
+          setNotice={setNotice}
+        />
+      )}
+    </>
+  );
 }
 
-function StudentModal({ ceremonyId, student, pronunciationAudioUploadEnabled, close, reload, setNotice }: { ceremonyId: number; student: Student | null; pronunciationAudioUploadEnabled: boolean; close: () => void; reload: () => Promise<void>; setNotice: (value: string) => void }) {
-  const [form, setForm] = useState({ student_id: student?.student_id ?? '', display_name: student?.display_name ?? '', native_name: student?.native_name ?? '', phonetic_spelling: student?.phonetic_spelling ?? '', program: student?.program ?? '', announcement_text: student?.announcement_text ?? '', pronunciation_status: student?.pronunciation_status === 'approved' ? 'approved' : 'needs_review' })
-  const [savedStudent, setSavedStudent] = useState<Student | null>(student)
-  const [audioFile, setAudioFile] = useState<File | null>(null)
-  const [showQr, setShowQr] = useState(false)
-  const dirty = !!student && Object.entries(form).some(([key, value]) => value !== (savedStudent?.[key as keyof Student] ?? ''))
-  const update = (key: string, value: string) => setForm((current) => ({ ...current, [key]: value }))
-  const portalUpdated = (key: string) => student?.portal_updated_fields.includes(key)
+function StudentModal({
+  ceremonyId,
+  student,
+  pronunciationAudioUploadEnabled,
+  close,
+  reload,
+  setNotice,
+}: {
+  ceremonyId: number;
+  student: Student | null;
+  pronunciationAudioUploadEnabled: boolean;
+  close: () => void;
+  reload: () => Promise<void>;
+  setNotice: (value: string) => void;
+}) {
+  const [form, setForm] = useState({
+    student_id: student?.student_id ?? "",
+    display_name: student?.display_name ?? "",
+    native_name: student?.native_name ?? "",
+    phonetic_spelling: student?.phonetic_spelling ?? "",
+    program: student?.program ?? "",
+    announcement_text: student?.announcement_text ?? "",
+    pronunciation_status:
+      student?.pronunciation_status === "approved"
+        ? "approved"
+        : "needs_review",
+  });
+  const [savedStudent, setSavedStudent] = useState<Student | null>(student);
+  const [audioFile, setAudioFile] = useState<File | null>(null);
+  const [showQr, setShowQr] = useState(false);
+  const dirty =
+    !!student &&
+    Object.entries(form).some(
+      ([key, value]) => value !== (savedStudent?.[key as keyof Student] ?? ""),
+    );
+  const update = (key: string, value: string) =>
+    setForm((current) => ({ ...current, [key]: value }));
+  const portalUpdated = (key: string) =>
+    student?.portal_updated_fields.includes(key);
   useEffect(() => {
-    if (!student || !savedStudent) return
-    const profileKeys = ['student_id', 'display_name', 'native_name', 'phonetic_spelling', 'program', 'announcement_text', 'pronunciation_status'] as const
-    if (!profileKeys.some((key) => form[key] !== (savedStudent[key] ?? ''))) return
+    if (!student || !savedStudent) return;
+    const profileKeys = [
+      "student_id",
+      "display_name",
+      "native_name",
+      "phonetic_spelling",
+      "program",
+      "announcement_text",
+      "pronunciation_status",
+    ] as const;
+    if (!profileKeys.some((key) => form[key] !== (savedStudent[key] ?? "")))
+      return;
     const timeout = window.setTimeout(async () => {
       try {
-        const saved = await api.patch<Student>(`/api/students/${student.id}`, form)
-        setSavedStudent(saved)
-        await reload()
+        const saved = await api.patch<Student>(
+          `/api/students/${student.id}`,
+          form,
+        );
+        setSavedStudent(saved);
+        await reload();
       } catch (error) {
-        setNotice((error as Error).message)
+        setNotice((error as Error).message);
       }
-    }, 500)
-    return () => window.clearTimeout(timeout)
-  }, [student, savedStudent, form, reload, setNotice])
+    }, 500);
+    return () => window.clearTimeout(timeout);
+  }, [student, savedStudent, form, reload, setNotice]);
   const submit = async (event: React.FormEvent) => {
-    event.preventDefault()
+    event.preventDefault();
     try {
-      const saved = student ? await api.patch<Student>(`/api/students/${student.id}`, form) : await api.post<Student>(`/api/ceremonies/${ceremonyId}/students/new`, form)
+      const saved = student
+        ? await api.patch<Student>(`/api/students/${student.id}`, form)
+        : await api.post<Student>(
+            `/api/ceremonies/${ceremonyId}/students/new`,
+            form,
+          );
       if (audioFile) {
-        const data = new FormData(); data.append('file', audioFile); data.append('source', 'upload'); data.append('approve', 'true'); data.append('ceremony_id', String(ceremonyId))
-        await api.post(`/api/students/${saved.id}/audio`, data)
+        const data = new FormData();
+        data.append("file", audioFile);
+        data.append("source", "upload");
+        data.append("approve", "true");
+        data.append("ceremony_id", String(ceremonyId));
+        await api.post(`/api/students/${saved.id}/audio`, data);
       }
-      setSavedStudent(saved); await reload(); setNotice(`${form.display_name} saved.`); close()
-    } catch (error) { setNotice((error as Error).message) }
-  }
-  return <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}><form className="modal" onSubmit={submit}><div className="modal-heading"><div><p className="eyebrow">PRONUNCIATION RECORD</p><h2>{student ? 'Review student' : 'Add student'}</h2></div><div className="modal-heading-actions">{student && <button type="button" className="qr-icon-button" aria-label="Show student QR code" title="Show student QR code" onClick={() => setShowQr(true)}><i className="bi bi-qr-code" aria-hidden="true" /></button>}<label className="status-toggle"><input type="checkbox" checked={form.pronunciation_status === 'approved'} onChange={(event) => update('pronunciation_status', event.target.checked ? 'approved' : 'needs_review')} /><span>{form.pronunciation_status === 'approved' ? 'Approved' : 'Needs review'}</span></label><button type="button" className="close" onClick={close}>×</button></div></div><div className="form-grid">
-    <label>Student ID<input required value={form.student_id} onChange={(e) => update('student_id', e.target.value)} /></label>
-    <label>Program{portalUpdated('program') && <em className="portal-update-label">Updated from portal</em>}<input value={form.program} onChange={(e) => update('program', e.target.value)} /></label>
-    <label className="wide">Display name{portalUpdated('display_name') && <em className="portal-update-label">Updated from portal</em>}<input required value={form.display_name} onChange={(e) => update('display_name', e.target.value)} /></label>
-    <label className="wide">Native-language name{portalUpdated('native_name') && <em className="portal-update-label">Updated from portal</em>}<input dir="auto" value={form.native_name} onChange={(e) => update('native_name', e.target.value)} /></label>
-    <label className="wide">Phonetic name{portalUpdated('phonetic_spelling') && <em className="portal-update-label">Updated from portal</em>}<input value={form.phonetic_spelling} placeholder="e.g. ngwin meen ahn" onChange={(e) => update('phonetic_spelling', e.target.value)} /></label>
-    {pronunciationAudioUploadEnabled && <label className="wide upload-zone">Approved pronunciation audio{portalUpdated('audio') && <em className="portal-update-label">Updated from portal</em>}<input type="file" accept="audio/*" onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)} /><span>{audioFile?.name ?? (student?.active_audio ? `Current: ${student.active_audio.original_filename}` : 'Choose an MP3, WAV, M4A, OGG, or WebM file')}</span></label>}
-  </div>
-  {student && <PronunciationTools student={{ ...student, ...form, active_audio: savedStudent?.active_audio ?? student.active_audio, active_audio_id: savedStudent?.active_audio_id ?? student.active_audio_id }} dirty={dirty || !!audioFile} onChanged={async (updated, message) => { setForm(current => ({ ...current, pronunciation_status: updated.pronunciation_status })); setSavedStudent(updated); await reload(); setNotice(message) }} />}
-  <div className="modal-actions"><button type="button" className="secondary" onClick={close}>Cancel</button><button className="primary">Save record</button></div></form>{showQr && <div className="qr-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowQr(false)}><div className="qr-modal" role="dialog" aria-modal="true" aria-label={`QR code for ${student?.display_name}`}><div className="qr-modal-heading"><h3>Student QR code</h3><button type="button" className="close" aria-label="Close QR code" onClick={() => setShowQr(false)}>×</button></div><img src={`/api/students/${student?.id}/qr.svg`} alt={`QR code for ${student?.display_name}`} /></div></div>}</div>
+      setSavedStudent(saved);
+      await reload();
+      setNotice(`${form.display_name} saved.`);
+      close();
+    } catch (error) {
+      setNotice((error as Error).message);
+    }
+  };
+  return (
+    <div
+      className="modal-backdrop"
+      onMouseDown={(event) => event.target === event.currentTarget && close()}
+    >
+      <form className="modal" onSubmit={submit}>
+        <div className="modal-heading">
+          <div>
+            <p className="eyebrow">PRONUNCIATION RECORD</p>
+            <h2>{student ? "Review student" : "Add student"}</h2>
+          </div>
+          <div className="modal-heading-actions">
+            {student && (
+              <button
+                type="button"
+                className="qr-icon-button"
+                aria-label="Show student QR code"
+                title="Show student QR code"
+                onClick={() => setShowQr(true)}
+              >
+                <i className="bi bi-qr-code" aria-hidden="true" />
+              </button>
+            )}
+            <label className="status-toggle">
+              <input
+                type="checkbox"
+                checked={form.pronunciation_status === "approved"}
+                onChange={(event) =>
+                  update(
+                    "pronunciation_status",
+                    event.target.checked ? "approved" : "needs_review",
+                  )
+                }
+              />
+              <span>
+                {form.pronunciation_status === "approved"
+                  ? "Approved"
+                  : "Needs review"}
+              </span>
+            </label>
+            <button type="button" className="close" onClick={close}>
+              ×
+            </button>
+          </div>
+        </div>
+        <div className="form-grid">
+          <label>
+            Student ID
+            <input
+              required
+              value={form.student_id}
+              onChange={(e) => update("student_id", e.target.value)}
+            />
+          </label>
+          <label>
+            Program
+            {portalUpdated("program") && (
+              <em className="portal-update-label">Updated from portal</em>
+            )}
+            <input
+              value={form.program}
+              onChange={(e) => update("program", e.target.value)}
+            />
+          </label>
+          <label className="wide">
+            Display name
+            {portalUpdated("display_name") && (
+              <em className="portal-update-label">Updated from portal</em>
+            )}
+            <input
+              required
+              value={form.display_name}
+              onChange={(e) => update("display_name", e.target.value)}
+            />
+          </label>
+          <label className="wide">
+            Native-language name
+            {portalUpdated("native_name") && (
+              <em className="portal-update-label">Updated from portal</em>
+            )}
+            <input
+              dir="auto"
+              value={form.native_name}
+              onChange={(e) => update("native_name", e.target.value)}
+            />
+          </label>
+          <label className="wide">
+            Phonetic name
+            {portalUpdated("phonetic_spelling") && (
+              <em className="portal-update-label">Updated from portal</em>
+            )}
+            <input
+              value={form.phonetic_spelling}
+              placeholder="e.g. ngwin meen ahn"
+              onChange={(e) => update("phonetic_spelling", e.target.value)}
+            />
+          </label>
+          {pronunciationAudioUploadEnabled && (
+            <label className="wide upload-zone">
+              Approved pronunciation audio
+              {portalUpdated("audio") && (
+                <em className="portal-update-label">Updated from portal</em>
+              )}
+              <input
+                type="file"
+                accept="audio/*"
+                onChange={(e) => setAudioFile(e.target.files?.[0] ?? null)}
+              />
+              <span>
+                {audioFile?.name ??
+                  (student?.active_audio
+                    ? `Current: ${student.active_audio.original_filename}`
+                    : "Choose an MP3, WAV, M4A, OGG, or WebM file")}
+              </span>
+            </label>
+          )}
+        </div>
+        {student && (
+          <PronunciationTools
+            student={{
+              ...student,
+              ...form,
+              active_audio: savedStudent?.active_audio ?? student.active_audio,
+              active_audio_id:
+                savedStudent?.active_audio_id ?? student.active_audio_id,
+            }}
+            dirty={dirty || !!audioFile}
+            onChanged={async (updated, message) => {
+              setForm((current) => ({
+                ...current,
+                pronunciation_status: updated.pronunciation_status,
+              }));
+              setSavedStudent(updated);
+              await reload();
+              setNotice(message);
+            }}
+          />
+        )}
+        <div className="modal-actions">
+          <button type="button" className="secondary" onClick={close}>
+            Cancel
+          </button>
+          <button className="primary">Save record</button>
+        </div>
+      </form>
+      {showQr && (
+        <div
+          className="qr-modal-backdrop"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setShowQr(false)
+          }
+        >
+          <div
+            className="qr-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`QR code for ${student?.display_name}`}
+          >
+            <div className="qr-modal-heading">
+              <h3>Student QR code</h3>
+              <button
+                type="button"
+                className="close"
+                aria-label="Close QR code"
+                onClick={() => setShowQr(false)}
+              >
+                ×
+              </button>
+            </div>
+            <img
+              src={`/api/students/${student?.id}/qr.svg`}
+              alt={`QR code for ${student?.display_name}`}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
 
-function Ceremonies({ ceremonies, selectedCeremonyId, newCeremonyRequest, reload, setSelected, setNotice }: { ceremonies: Ceremony[]; selectedCeremonyId: number | null; newCeremonyRequest: number; reload: () => Promise<void>; setSelected: (id: number | null) => void; setNotice: (value: string) => void }) {
-  const [detail, setDetail] = useState<CeremonyDetail | null>(null)
-  const [showCreate, setShowCreate] = useState(false)
-  const [editingCeremony, setEditingCeremony] = useState<Ceremony | null>(null)
-  const [form, setForm] = useState({ name: '', event_date: '', location: '' })
-  const [createError, setCreateError] = useState('')
-  const [creating, setCreating] = useState(false)
-  const [packageBusy, setPackageBusy] = useState(false)
-  const [showCeremonyQr, setShowCeremonyQr] = useState(false)
-  const packageRef = useRef<HTMLInputElement>(null)
-  const loadDetail = (id: number) => api.get<CeremonyDetail>(`/api/ceremonies/${id}`).then(setDetail).catch((e) => setNotice(e.message))
-  useEffect(() => { if (selectedCeremonyId) void loadDetail(selectedCeremonyId); else setDetail(null) }, [selectedCeremonyId])
-  const create = async (event: React.FormEvent) => {
-    event.preventDefault(); setCreateError('')
-    if (!form.name.trim()) { setCreateError('Enter a ceremony name.'); return }
-    if (!form.event_date) { setCreateError('Choose a ceremony date.'); return }
-    setCreating(true)
+function Ceremonies({
+  ceremonies,
+  selectedCeremonyId,
+  newCeremonyRequest,
+  reload,
+  setSelected,
+  setNotice,
+}: {
+  ceremonies: Ceremony[];
+  selectedCeremonyId: number | null;
+  newCeremonyRequest: number;
+  reload: () => Promise<void>;
+  setSelected: (id: number | null) => void;
+  setNotice: (value: string) => void;
+}) {
+  const [detail, setDetail] = useState<CeremonyDetail | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [editingCeremony, setEditingCeremony] = useState<Ceremony | null>(null);
+  const [form, setForm] = useState({
+    name: "",
+    event_date: "",
+    location: "",
+    pronunciation_audio_upload_enabled: true,
+  });
+  const [createError, setCreateError] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [packageBusy, setPackageBusy] = useState(false);
+  const [showCeremonyQr, setShowCeremonyQr] = useState(false);
+  const [selectedQrIds, setSelectedQrIds] = useState<Set<number>>(new Set());
+  const packageRef = useRef<HTMLInputElement>(null);
+  const loadDetail = (id: number) =>
+    api
+      .get<CeremonyDetail>(`/api/ceremonies/${id}`)
+      .then(setDetail)
+      .catch((e) => setNotice(e.message));
+  useEffect(() => {
+    if (selectedCeremonyId) void loadDetail(selectedCeremonyId);
+    else setDetail(null);
+  }, [selectedCeremonyId]);
+  useEffect(() => {
+    if (detail)
+      setSelectedQrIds(new Set(detail.entries.map((entry) => entry.id)));
+  }, [detail]);
+  const create = async (event: React.FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setCreateError("");
+    if (!form.name.trim()) {
+      setCreateError("Enter a ceremony name.");
+      return;
+    }
+    if (!form.event_date) {
+      setCreateError("Choose a ceremony date.");
+      return;
+    }
+    setCreating(true);
     try {
       const ceremony = editingCeremony
-        ? await api.patch<Ceremony>(`/api/ceremonies/${editingCeremony.id}`, { ...form, name: form.name.trim(), location: form.location.trim() })
-        : await api.post<Ceremony>('/api/ceremonies', { ...form, name: form.name.trim(), location: form.location.trim() })
-      await reload(); setSelected(ceremony.id); await loadDetail(ceremony.id)
-      setForm({ name: '', event_date: '', location: '' }); setShowCreate(false); setEditingCeremony(null)
-      setNotice(`${ceremony.name} ${editingCeremony ? 'updated' : 'created'}.`)
+        ? await api.patch<Ceremony>(`/api/ceremonies/${editingCeremony.id}`, {
+            ...form,
+            name: form.name.trim(),
+            location: form.location.trim(),
+          })
+        : await api.post<Ceremony>("/api/ceremonies", {
+            ...form,
+            name: form.name.trim(),
+            location: form.location.trim(),
+          });
+      await reload();
+      setSelected(ceremony.id);
+      await loadDetail(ceremony.id);
+      setForm({
+        name: "",
+        event_date: "",
+        location: "",
+        pronunciation_audio_upload_enabled: true,
+      });
+      setShowCreate(false);
+      setEditingCeremony(null);
+      setNotice(`${ceremony.name} ${editingCeremony ? "updated" : "created"}.`);
     } catch (e) {
-      setCreateError((e as Error).message)
-    } finally { setCreating(false) }
-  }
+      setCreateError((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
   const editCeremony = () => {
-    if (!detail) return
-    setCreateError('')
-    setForm({ name: detail.name, event_date: detail.event_date, location: detail.location })
-    setEditingCeremony(detail)
-  }
+    if (!detail) return;
+    setCreateError("");
+    setForm({
+      name: detail.name,
+      event_date: detail.event_date,
+      location: detail.location,
+      pronunciation_audio_upload_enabled:
+        detail.pronunciation_audio_upload_enabled,
+    });
+    setEditingCeremony(detail);
+  };
   const deleteCeremony = async () => {
-    if (!detail || !window.confirm(`Delete ${detail.name}? This will remove its roster assignments.`)) return
-    setCreateError('')
-    setCreating(true)
+    if (
+      !detail ||
+      !window.confirm(
+        `Delete ${detail.name}? This will remove its roster assignments.`,
+      )
+    )
+      return;
+    setCreateError("");
+    setCreating(true);
     try {
-      await api.delete(`/api/ceremonies/${detail.id}`)
-      await reload()
-      setSelected(null)
-      setDetail(null)
-      setShowCreate(false)
-      setEditingCeremony(null)
-      setForm({ name: '', event_date: '', location: '' })
-      setNotice(`${detail.name} deleted.`)
+      await api.delete(`/api/ceremonies/${detail.id}`);
+      await reload();
+      setSelected(null);
+      setDetail(null);
+      setShowCreate(false);
+      setEditingCeremony(null);
+      setForm({
+        name: "",
+        event_date: "",
+        location: "",
+        pronunciation_audio_upload_enabled: true,
+      });
+      setNotice(`${detail.name} deleted.`);
     } catch (e) {
-      setCreateError((e as Error).message)
-    } finally { setCreating(false) }
-  }
-  const closeCeremonyModal = () => { if (!creating) { setShowCreate(false); setEditingCeremony(null); setCreateError(''); setForm({ name: '', event_date: '', location: '' }) } }
-  useEffect(() => { if (newCeremonyRequest > 0) { setCreateError(''); setEditingCeremony(null); setForm({ name: '', event_date: '', location: '' }); setShowCreate(true) } }, [newCeremonyRequest])
-  const reloadCeremony = async () => { await reload(); if (detail) await loadDetail(detail.id) }
+      setCreateError((e as Error).message);
+    } finally {
+      setCreating(false);
+    }
+  };
+  const closeCeremonyModal = () => {
+    if (!creating) {
+      setShowCreate(false);
+      setEditingCeremony(null);
+      setCreateError("");
+      setForm({
+        name: "",
+        event_date: "",
+        location: "",
+        pronunciation_audio_upload_enabled: true,
+      });
+    }
+  };
+  useEffect(() => {
+    if (newCeremonyRequest > 0) {
+      setCreateError("");
+      setEditingCeremony(null);
+      setForm({
+        name: "",
+        event_date: "",
+        location: "",
+        pronunciation_audio_upload_enabled: true,
+      });
+      setShowCreate(true);
+    }
+  }, [newCeremonyRequest]);
+  const reloadCeremony = async () => {
+    await reload();
+    if (detail) await loadDetail(detail.id);
+  };
   const downloadPortalPackage = async () => {
-    if (!detail) return
-    setPackageBusy(true)
+    if (!detail) return;
+    setPackageBusy(true);
     try {
-      const response = await fetch(`/api/ceremonies/${detail.id}/portal-package/export`)
-      if (!response.ok) throw new Error((await response.json().catch(() => null))?.detail || response.statusText)
-      const url = URL.createObjectURL(await response.blob())
-      const link = document.createElement('a'); link.href = url; link.download = `gradvoice-portal-${detail.event_date}-${detail.id}.zip`; link.click(); URL.revokeObjectURL(url)
-      setNotice(`Exported the portal roster for ${detail.name}.`)
-    } catch (error) { setNotice((error as Error).message) } finally { setPackageBusy(false) }
-  }
+      const response = await fetch(
+        `/api/ceremonies/${detail.id}/portal-package/export`,
+      );
+      if (!response.ok)
+        throw new Error(
+          (await response.json().catch(() => null))?.detail ||
+            response.statusText,
+        );
+      const url = URL.createObjectURL(await response.blob());
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `gradvoice-portal-${detail.event_date}-${detail.id}.zip`;
+      link.click();
+      URL.revokeObjectURL(url);
+      setNotice(`Exported the portal roster for ${detail.name}.`);
+    } catch (error) {
+      setNotice((error as Error).message);
+    } finally {
+      setPackageBusy(false);
+    }
+  };
   const importPortalPackage = async (file?: File) => {
-    if (!detail || !file) return
-    setPackageBusy(true)
+    if (!detail || !file) return;
+    setPackageBusy(true);
     try {
-      const previewData = new FormData(); previewData.append('file', file)
-      const previewResponse = await fetch(`/api/ceremonies/${detail.id}/portal-package/preview`, { method: 'POST', body: previewData })
-      const preview = await previewResponse.json()
-      if (!previewResponse.ok) throw new Error(preview.detail || previewResponse.statusText)
-      const includedAudio = preview.students.filter((student: { audio: string }) => student.audio === 'included').length
-      const changedProfiles = preview.students.filter((student: { changed?: string[] }) => (student.changed || []).length > 0).length
-      const changedAudio = preview.students.filter((student: { audio_changed?: boolean }) => student.audio_changed).length
-      const labels = `${changedProfiles} profile${changedProfiles === 1 ? '' : 's'} changed, ${changedAudio} audio selection${changedAudio === 1 ? '' : 's'} changed`
-      if (!window.confirm(`Import ${preview.students.length} portal profile${preview.students.length === 1 ? '' : 's'} and ${includedAudio} audio file${includedAudio === 1 ? '' : 's'} into ${detail.name}?\n\n${labels}.`)) return
-      const importData = new FormData(); importData.append('file', file); importData.append('activate_audio', 'true')
-      const importResponse = await fetch(`/api/ceremonies/${detail.id}/portal-package/import`, { method: 'POST', body: importData })
-      const result = await importResponse.json()
-      if (!importResponse.ok) throw new Error(result.detail || importResponse.statusText)
-      await reloadCeremony()
-      setNotice(`Imported ${result.imported} portal profile${result.imported === 1 ? '' : 's'} and ${result.audio_imported} audio file${result.audio_imported === 1 ? '' : 's'}.`)
-    } catch (error) { setNotice((error as Error).message) } finally { setPackageBusy(false); if (packageRef.current) packageRef.current.value = '' }
-  }
-  return <>
-    <div className="ceremony-grid ceremony-single">
-      <section className="panel ceremony-detail">{detail ? <><div className="panel-heading"><div className="ceremony-title-row"><span className="date-tile"><b>{new Date(`${detail.event_date}T12:00:00`).toLocaleDateString(undefined, { month: 'short' }).toUpperCase()}</b><strong>{new Date(`${detail.event_date}T12:00:00`).getDate()}</strong></span><div><p className="eyebrow">CEREMONY OVERVIEW</p><div className="ceremony-name-row"><h3>{detail.name}</h3><button type="button" className="qr-icon-button" aria-label={`Show QR codes for ${detail.name}`} title="Show ceremony QR codes" onClick={() => setShowCeremonyQr(true)}><i className="bi bi-qr-code" aria-hidden="true" /></button></div><small className="ceremony-meta">{detail.event_date}{detail.location ? ` · ${detail.location}` : ''}</small></div></div><div className="panel-heading-actions"><label className="toggle-row ceremony-upload-toggle"><input type="checkbox" checked={detail.pronunciation_audio_upload_enabled} onChange={async (event) => { try { await api.patch(`/api/ceremonies/${detail.id}`, { pronunciation_audio_upload_enabled: event.target.checked }); await reloadCeremony(); setNotice(event.target.checked ? 'Pronunciation audio uploads enabled for this ceremony.' : 'Pronunciation audio uploads disabled for this ceremony.') } catch (error) { setNotice((error as Error).message) } }} /><span>Allow audio uploads</span></label><button className="secondary" disabled={packageBusy} onClick={downloadPortalPackage}>Export portal roster</button><input ref={packageRef} type="file" accept=".zip" hidden onChange={(event) => importPortalPackage(event.target.files?.[0])} /><button className="secondary" disabled={packageBusy} onClick={() => packageRef.current?.click()}>Import portal package</button><button className="secondary" onClick={editCeremony}>Edit ceremony</button></div></div><div className="ceremony-overview"><div><strong>{detail.entries.length}</strong><span>Students</span></div><div><strong>{detail.entries.filter(entry => entry.student.active_audio).length}</strong><span>Audio ready</span></div><div><strong>{detail.entries.filter(entry => !entry.student.active_audio).length}</strong><span>Audio missing</span></div><p>Manage the complete student roster below.</p></div></> : <div className="empty-state"><span>◇</span><h3>Select a ceremony</h3><p>Choose a ceremony from the menu above to manage its graduating class.</p></div>}</section>
-    </div>
-    {detail && <Students ceremonyId={detail.id} students={detail.entries.map(entry => entry.student)} pronunciationAudioUploadEnabled={detail.pronunciation_audio_upload_enabled} reload={reloadCeremony} setNotice={setNotice} />}
-    {(showCreate || editingCeremony) && <div className="modal-backdrop"><form className="modal small-modal" onSubmit={create} noValidate><div className="modal-heading"><h2>{editingCeremony ? 'Edit ceremony' : 'New ceremony'}</h2><button type="button" className="close" disabled={creating} onClick={closeCeremonyModal}>×</button></div><div className="form-grid single"><label>Ceremony name<input autoFocus required value={form.name} onChange={(e) => setForm({...form, name: e.target.value})} /></label><label>Date<input required type="date" value={form.event_date} onChange={(e) => setForm({...form, event_date: e.target.value})} /></label><label>Location <small>(optional)</small><input value={form.location} onChange={(e) => setForm({...form, location: e.target.value})} /></label></div>{createError && <p className="modal-error" role="alert">{createError}</p>}<div className="modal-actions">{editingCeremony && <button type="button" className="danger-button" disabled={creating} onClick={deleteCeremony}>Delete ceremony</button>}<button type="button" className="secondary" disabled={creating} onClick={closeCeremonyModal}>Cancel</button><button className="primary" disabled={creating}>{creating ? 'Saving…' : editingCeremony ? 'Save ceremony' : 'Create ceremony'}</button></div></form></div>}
-    {showCeremonyQr && detail && <div className="qr-modal-backdrop print-qr-modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowCeremonyQr(false)}><div className="ceremony-qr-modal" role="dialog" aria-modal="true" aria-label={`QR codes for ${detail.name}`}><div className="qr-modal-heading"><div><h3>{detail.name} QR codes</h3><small>{detail.entries.length} students</small></div><div className="qr-modal-actions"><button type="button" className="qr-icon-button print-hidden" aria-label="Print ceremony QR codes" title="Print ceremony QR codes" onClick={() => window.print()}><i className="bi bi-printer" aria-hidden="true" /></button><button type="button" className="close print-hidden" aria-label="Close ceremony QR codes" onClick={() => setShowCeremonyQr(false)}>×</button></div></div><div className="ceremony-qr-grid">{detail.entries.map(entry => <div className="ceremony-qr-card" key={entry.id}><img src={`/api/students/${entry.student.id}/qr.svg`} alt={`QR code for ${entry.student.display_name}`} /><strong>{entry.student.display_name}</strong><small>ID {entry.student.student_id}</small></div>)}</div></div></div>}
-  </>
+      const previewData = new FormData();
+      previewData.append("file", file);
+      const previewResponse = await fetch(
+        `/api/ceremonies/${detail.id}/portal-package/preview`,
+        { method: "POST", body: previewData },
+      );
+      const preview = await previewResponse.json();
+      if (!previewResponse.ok)
+        throw new Error(preview.detail || previewResponse.statusText);
+      const includedAudio = preview.students.filter(
+        (student: { audio: string }) => student.audio === "included",
+      ).length;
+      const changedProfiles = preview.students.filter(
+        (student: { changed?: string[] }) => (student.changed || []).length > 0,
+      ).length;
+      const changedAudio = preview.students.filter(
+        (student: { audio_changed?: boolean }) => student.audio_changed,
+      ).length;
+      const labels = `${changedProfiles} profile${changedProfiles === 1 ? "" : "s"} changed, ${changedAudio} audio selection${changedAudio === 1 ? "" : "s"} changed`;
+      if (
+        !window.confirm(
+          `Import ${preview.students.length} portal profile${preview.students.length === 1 ? "" : "s"} and ${includedAudio} audio file${includedAudio === 1 ? "" : "s"} into ${detail.name}?\n\n${labels}.`,
+        )
+      )
+        return;
+      const importData = new FormData();
+      importData.append("file", file);
+      importData.append("activate_audio", "true");
+      const importResponse = await fetch(
+        `/api/ceremonies/${detail.id}/portal-package/import`,
+        { method: "POST", body: importData },
+      );
+      const result = await importResponse.json();
+      if (!importResponse.ok)
+        throw new Error(result.detail || importResponse.statusText);
+      await reloadCeremony();
+      setNotice(
+        `Imported ${result.imported} portal profile${result.imported === 1 ? "" : "s"} and ${result.audio_imported} audio file${result.audio_imported === 1 ? "" : "s"}.`,
+      );
+    } catch (error) {
+      setNotice((error as Error).message);
+    } finally {
+      setPackageBusy(false);
+      if (packageRef.current) packageRef.current.value = "";
+    }
+  };
+  return (
+    <>
+      <div className="ceremony-grid ceremony-single">
+        <section className="panel ceremony-detail">
+          {detail ? (
+            <>
+              <div className="panel-heading">
+                <div className="ceremony-title-row">
+                  <span className="date-tile">
+                    <b>
+                      {new Date(`${detail.event_date}T12:00:00`)
+                        .toLocaleDateString(undefined, { month: "short" })
+                        .toUpperCase()}
+                    </b>
+                    <strong>
+                      {new Date(`${detail.event_date}T12:00:00`).getDate()}
+                    </strong>
+                  </span>
+                  <div>
+                    <p className="eyebrow">CEREMONY OVERVIEW</p>
+                    <div className="ceremony-name-row">
+                      <h3>{detail.name}</h3>
+                      <button
+                        type="button"
+                        className="qr-icon-button"
+                        aria-label={`Show QR codes for ${detail.name}`}
+                        title="Show ceremony QR codes"
+                        onClick={() => setShowCeremonyQr(true)}
+                      >
+                        <i className="bi bi-qr-code" aria-hidden="true" />
+                      </button>
+                    </div>
+                    <small className="ceremony-meta">
+                      {detail.event_date}
+                      {detail.location ? ` · ${detail.location}` : ""}
+                    </small>
+                  </div>
+                </div>
+                <div className="panel-heading-actions">
+                  <button
+                    className="secondary"
+                    disabled={packageBusy}
+                    onClick={downloadPortalPackage}
+                  >
+                    Export portal roster
+                  </button>
+                  <input
+                    ref={packageRef}
+                    type="file"
+                    accept=".zip"
+                    hidden
+                    onChange={(event) =>
+                      importPortalPackage(event.target.files?.[0])
+                    }
+                  />
+                  <button
+                    className="secondary"
+                    disabled={packageBusy}
+                    onClick={() => packageRef.current?.click()}
+                  >
+                    Import portal package
+                  </button>
+                  <button className="secondary" onClick={editCeremony}>
+                    Edit ceremony
+                  </button>
+                </div>
+              </div>
+              <div className="ceremony-overview">
+                <div>
+                  <strong>{detail.entries.length}</strong>
+                  <span>Students</span>
+                </div>
+                <div>
+                  <strong>
+                    {
+                      detail.entries.filter(
+                        (entry) => entry.student.active_audio,
+                      ).length
+                    }
+                  </strong>
+                  <span>Audio ready</span>
+                </div>
+                <div>
+                  <strong>
+                    {
+                      detail.entries.filter(
+                        (entry) => !entry.student.active_audio,
+                      ).length
+                    }
+                  </strong>
+                  <span>Audio missing</span>
+                </div>
+                <p>Manage the complete student roster below.</p>
+              </div>
+            </>
+          ) : (
+            <div className="empty-state">
+              <span>◇</span>
+              <h3>Select a ceremony</h3>
+              <p>
+                Choose a ceremony from the menu above to manage its graduating
+                class.
+              </p>
+            </div>
+          )}
+        </section>
+      </div>
+      {detail && (
+        <Students
+          ceremonyId={detail.id}
+          students={detail.entries.map((entry) => entry.student)}
+          pronunciationAudioUploadEnabled={
+            detail.pronunciation_audio_upload_enabled
+          }
+          reload={reloadCeremony}
+          setNotice={setNotice}
+        />
+      )}
+      {(showCreate || editingCeremony) && (
+        <div className="modal-backdrop">
+          <form className="modal small-modal" onSubmit={create} noValidate>
+            <div className="modal-heading">
+              <h2>{editingCeremony ? "Edit ceremony" : "New ceremony"}</h2>
+              <button
+                type="button"
+                className="close"
+                disabled={creating}
+                onClick={closeCeremonyModal}
+              >
+                ×
+              </button>
+            </div>
+            <div className="form-grid single">
+              <label>
+                Ceremony name
+                <input
+                  autoFocus
+                  required
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                />
+              </label>
+              <label>
+                Date
+                <input
+                  required
+                  type="date"
+                  value={form.event_date}
+                  onChange={(e) =>
+                    setForm({ ...form, event_date: e.target.value })
+                  }
+                />
+              </label>
+              <label>
+                Location <small>(optional)</small>
+                <input
+                  value={form.location}
+                  onChange={(e) =>
+                    setForm({ ...form, location: e.target.value })
+                  }
+                />
+              </label>
+              <label className="toggle-row modal-upload-toggle">
+                <input
+                  type="checkbox"
+                  checked={form.pronunciation_audio_upload_enabled}
+                  onChange={(event) =>
+                    setForm({
+                      ...form,
+                      pronunciation_audio_upload_enabled: event.target.checked,
+                    })
+                  }
+                />
+                <span>Allow audio uploads</span>
+              </label>
+            </div>
+            {createError && (
+              <p className="modal-error" role="alert">
+                {createError}
+              </p>
+            )}
+            <div className="modal-actions">
+              {editingCeremony && (
+                <button
+                  type="button"
+                  className="danger-button"
+                  disabled={creating}
+                  onClick={deleteCeremony}
+                >
+                  Delete ceremony
+                </button>
+              )}
+              <button
+                type="button"
+                className="secondary"
+                disabled={creating}
+                onClick={closeCeremonyModal}
+              >
+                Cancel
+              </button>
+              <button className="primary" disabled={creating}>
+                {creating
+                  ? "Saving…"
+                  : editingCeremony
+                    ? "Save ceremony"
+                    : "Create ceremony"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+      {showCeremonyQr && detail && (
+        <div
+          className="qr-modal-backdrop print-qr-modal-backdrop"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setShowCeremonyQr(false)
+          }
+        >
+          <div
+            className="ceremony-qr-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label={`QR codes for ${detail.name}`}
+          >
+            <div className="qr-modal-heading">
+              <div>
+                <h3>{detail.name} QR codes</h3>
+                <small>
+                  {selectedQrIds.size} of {detail.entries.length} students
+                  selected
+                </small>
+              </div>
+              <div className="qr-modal-actions">
+                <button
+                  type="button"
+                  className="secondary print-hidden"
+                  onClick={() =>
+                    setSelectedQrIds(
+                      new Set(detail.entries.map((entry) => entry.id)),
+                    )
+                  }
+                >
+                  Select all
+                </button>
+                <button
+                  type="button"
+                  className="secondary print-hidden"
+                  onClick={() => setSelectedQrIds(new Set())}
+                >
+                  Deselect all
+                </button>
+                <button
+                  type="button"
+                  className="qr-icon-button print-hidden"
+                  aria-label="Print selected ceremony QR codes"
+                  title="Print selected ceremony QR codes"
+                  disabled={!selectedQrIds.size}
+                  onClick={() => window.print()}
+                >
+                  <i className="bi bi-printer" aria-hidden="true" />
+                </button>
+                <button
+                  type="button"
+                  className="close print-hidden"
+                  aria-label="Close ceremony QR codes"
+                  onClick={() => setShowCeremonyQr(false)}
+                >
+                  ×
+                </button>
+              </div>
+            </div>
+            <div className="ceremony-qr-grid">
+              {detail.entries.map((entry) => (
+                <div
+                  className={`ceremony-qr-card${selectedQrIds.has(entry.id) ? "" : " qr-card-unselected"}`}
+                  key={entry.id}
+                >
+                  <label className="qr-card-selection print-hidden">
+                    <input
+                      type="checkbox"
+                      checked={selectedQrIds.has(entry.id)}
+                      onChange={() =>
+                        setSelectedQrIds((current) => {
+                          const next = new Set(current);
+                          if (next.has(entry.id)) next.delete(entry.id);
+                          else next.add(entry.id);
+                          return next;
+                        })
+                      }
+                    />{" "}
+                    Include
+                  </label>
+                  <img
+                    src={`/api/students/${entry.student.id}/qr.svg`}
+                    alt={`QR code for ${entry.student.display_name}`}
+                  />
+                  <strong>{entry.student.display_name}</strong>
+                  <small>ID {entry.student.student_id}</small>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
 }
 
-function CheckIn({ ceremonyId, setNotice }: { ceremonyId: number | null; setNotice: (value: string) => void }) {
-  type SerialPort = { device: string; description: string }
-  type ScannerStatus = { connected: boolean; port: string | null; mode: 'checkin' | 'stage' | null; ceremony_id: number | null; revision: number; last_entry_id: number | null; last_student: string | null; last_error: string | null }
-  const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null)
-  const [token, setToken] = useState('')
-  const [search, setSearch] = useState('')
-  const [ports, setPorts] = useState<SerialPort[]>([])
-  const [port, setPort] = useState('')
-  const [status, setStatus] = useState<ScannerStatus | null>(null)
-  const [busy, setBusy] = useState(false)
-  const [draggedEntryId, setDraggedEntryId] = useState<number | null>(null)
-  const handledScannerRevision = useRef<number | null>(null)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const switchingMode = useRef(false)
-  const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(setCeremony).catch(e => setNotice(e.message)) : Promise.resolve(), [ceremonyId, setNotice])
+function CheckIn({
+  ceremonyId,
+  setNotice,
+}: {
+  ceremonyId: number | null;
+  setNotice: (value: string) => void;
+}) {
+  type SerialPort = { device: string; description: string };
+  type ScannerStatus = {
+    connected: boolean;
+    port: string | null;
+    mode: "checkin" | "stage" | null;
+    ceremony_id: number | null;
+    revision: number;
+    last_entry_id: number | null;
+    last_student: string | null;
+    last_error: string | null;
+  };
+  const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null);
+  const [token, setToken] = useState("");
+  const [search, setSearch] = useState("");
+  const [ports, setPorts] = useState<SerialPort[]>([]);
+  const [port, setPort] = useState("");
+  const [status, setStatus] = useState<ScannerStatus | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [printingLine, setPrintingLine] = useState(false);
+  const [draggedEntryId, setDraggedEntryId] = useState<number | null>(null);
+  const handledScannerRevision = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const switchingMode = useRef(false);
+  const load = useCallback(
+    () =>
+      ceremonyId
+        ? api
+            .get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`)
+            .then(setCeremony)
+            .catch((e) => setNotice(e.message))
+        : Promise.resolve(),
+    [ceremonyId, setNotice],
+  );
   useEffect(() => {
-    let stopped = false; let timer: ReturnType<typeof setTimeout>
-    const poll = async () => { await Promise.all([load(), api.get<ScannerStatus>('/api/scanner/status').then(setStatus)]); if (!stopped) timer = setTimeout(poll, 750) }
-    void poll(); return () => { stopped = true; clearTimeout(timer) }
-  }, [load])
-  const refreshPorts = async () => { try { const found = await api.get<SerialPort[]>('/api/scanner/ports'); setPorts(found); setPort(value => value || found[0]?.device || '') } catch (e) { setNotice((e as Error).message) } }
-  useEffect(() => { void refreshPorts() }, [])
-  const connect = async () => { const selectedPort = status?.connected ? status.port : port; if (!ceremonyId || !selectedPort) return; setBusy(true); try { setStatus(await api.post('/api/scanner/connect', { port: selectedPort, baud: 9600, ceremony_id: ceremonyId, mode: 'checkin' })); setNotice('Check-in scanner connected. Students can now scan their QR codes to join the arrival line.') } catch (e) { setNotice((e as Error).message) } finally { setBusy(false) } }
-  const disconnect = async () => { setBusy(true); try { setStatus(await api.post('/api/scanner/disconnect')); setNotice('Serial scanner disconnected.') } catch (e) { setNotice((e as Error).message) } finally { setBusy(false) } }
-  const playCheckInConfirmation = async (entry: Entry) => {
-    const audio = entry.student.active_audio
-    if (!audio?.approved || entry.student.pronunciation_status !== 'approved') {
-      setNotice(`${entry.student.display_name} checked in, but no approved pronunciation is available.`)
-      return
-    }
-    try {
-      if (audioRef.current && !audioRef.current.paused) audioRef.current.pause()
-      audioRef.current = new Audio(audio.url)
-      await audioRef.current.play()
-      setNotice(`${entry.student.display_name} checked in at line position ${entry.line_position}.`)
-    } catch {
-      setNotice(`${entry.student.display_name} checked in. The browser blocked automatic audio; use the student's saved audio manually if needed.`)
-    }
-  }
-  const checkIn = async (scanToken: string) => { if (!ceremonyId || !scanToken.trim()) return; try { const entry = await api.post<Entry>(`/api/ceremonies/${ceremonyId}/scan`, { token: scanToken }); setToken(''); await playCheckInConfirmation(entry); await load() } catch (e) { setNotice((e as Error).message) } }
-  const undo = async (entry: Entry) => { try { await api.post(`/api/entries/${entry.id}/action`, { action: 'reset' }); setNotice(`${entry.student.display_name}'s check-in was undone.`); await load() } catch (e) { setNotice((e as Error).message) } }
-  const waiting = ceremony?.entries.filter(e => ['checked_in', 'at_stage'].includes(e.status)).sort((a,b) => (a.line_position ?? 0) - (b.line_position ?? 0)) ?? []
-  const reorderWaiting = async (sourceId: number, targetId: number) => {
-    const reorderable = waiting.filter(entry => entry.status === 'checked_in' || entry.status === 'queued')
-    const sourceIndex = reorderable.findIndex(entry => entry.id === sourceId)
-    const targetIndex = reorderable.findIndex(entry => entry.id === targetId)
-    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex || !ceremonyId) return
-    const entryIds = reorderable.map(entry => entry.id)
-    const [moved] = entryIds.splice(sourceIndex, 1)
-    entryIds.splice(targetIndex, 0, moved)
-    try { setCeremony(await api.post<CeremonyDetail>(`/api/ceremonies/${ceremonyId}/queue/reorder`, { entry_ids: entryIds })) } catch (e) { setNotice((e as Error).message) }
-  }
-  useEffect(() => {
-    const rows = Array.from(document.querySelectorAll<HTMLElement>('.ceremony-grid > section:first-child .stage-roster-row'))
-    const cleanups = rows.map((row, index) => {
-      const entry = waiting[index]
-      if (!entry || entry.status === 'at_stage') return () => undefined
-      let sourceId: number | null = null
-      const onDragStart = (event: DragEvent) => { sourceId = entry.id; setDraggedEntryId(entry.id); row.classList.add('dragging'); event.dataTransfer?.setData('text/plain', String(entry.id)); if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move' }
-      const onDragEnd = () => { sourceId = null; setDraggedEntryId(null); row.classList.remove('dragging') }
-      const onDragOver = (event: DragEvent) => { event.preventDefault(); if (event.dataTransfer) event.dataTransfer.dropEffect = 'move' }
-      const onDrop = (event: DragEvent) => { event.preventDefault(); const draggedId = sourceId ?? Number(event.dataTransfer?.getData('text/plain')); if (draggedId) void reorderWaiting(draggedId, entry.id) }
-      row.draggable = true; row.classList.add('draggable'); row.addEventListener('dragstart', onDragStart); row.addEventListener('dragend', onDragEnd); row.addEventListener('dragover', onDragOver); row.addEventListener('drop', onDrop)
-      return () => { row.draggable = false; row.classList.remove('draggable', 'dragging'); row.removeEventListener('dragstart', onDragStart); row.removeEventListener('dragend', onDragEnd); row.removeEventListener('dragover', onDragOver); row.removeEventListener('drop', onDrop) }
-    })
-    return () => cleanups.forEach(cleanup => cleanup())
-  }, [waiting, reorderWaiting])
-  const scannerReady = status?.connected && status.mode === 'checkin' && status.ceremony_id === ceremonyId
-  useEffect(() => {
-    if (!status?.connected || scannerReady || !status.port || !ceremonyId || switchingMode.current) return
-    switchingMode.current = true
-    setBusy(true)
-    api.post<ScannerStatus>('/api/scanner/connect', { port: status.port, baud: 9600, ceremony_id: ceremonyId, mode: 'checkin' })
-      .then(next => { handledScannerRevision.current = next.revision; setStatus(next); setNotice('Scanner automatically switched to check-in mode.') })
-      .catch(error => setNotice(`Could not switch scanner to check-in mode: ${error.message}`))
-      .finally(() => { switchingMode.current = false; setBusy(false) })
-  }, [status?.connected, status?.mode, status?.ceremony_id, status?.port, scannerReady, ceremonyId, setNotice])
-  useEffect(() => {
-    if (!status) return
-    if (handledScannerRevision.current === null) {
-      handledScannerRevision.current = status.revision
-      return
-    }
-    if (status.revision <= handledScannerRevision.current) return
-    if (status.last_error) { handledScannerRevision.current = status.revision; setNotice(`Scanner: ${status.last_error}`); return }
-    if (!scannerReady || !status.last_entry_id || !ceremony) return
-    const entry = ceremony.entries.find(item => item.id === status.last_entry_id)
-    if (!entry || !['checked_in', 'at_stage'].includes(entry.status)) return
-    handledScannerRevision.current = status.revision
-    void playCheckInConfirmation(entry)
-  }, [status?.revision, ceremony, scannerReady])
-  const roster = ceremony?.entries.filter(e => { const q = search.trim().toLowerCase(); return !q || `${e.student.display_name} ${e.student.student_id} ${e.student.program}`.toLowerCase().includes(q) }).sort((a,b) => a.position - b.position) ?? []
-  if (!ceremonyId) return <div className="empty-state tall"><span>✓</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
-  return <>
-    <div className="page-heading page-status-only"><span className="stage-status">{waiting.length} arrived</span></div>
-    <section className={`panel scanner-panel${status?.connected && !scannerReady ? ' scanner-wrong-mode' : ''}`}><div><p className="eyebrow">SERIAL QR SCANNER · CHECK-IN MODE</p><strong>{scannerReady ? `Ready for student QR scans · ${status.port}` : status?.connected ? `Scanner is currently in ${status.mode} mode` : 'Scanner disconnected'}</strong>{status?.connected && !scannerReady && <small>Switch it to check-in mode before students scan.</small>}{scannerReady && status?.last_student && <small>Last student: {status.last_student}</small>}</div><select value={status?.connected ? status.port ?? '' : port} disabled={busy || !!status?.connected} onChange={e => setPort(e.target.value)}><option value="">Select serial port</option>{ports.map(p => <option value={p.device} key={p.device}>{p.description} · {p.device}</option>)}</select><button className="secondary" disabled={busy || !!status?.connected} onClick={refreshPorts}>Refresh ports</button>{status?.connected && !scannerReady ? <button className="primary" disabled={busy} onClick={connect}>{busy ? 'Switching…' : 'Switch to check-in'}</button> : status?.connected ? <button className="danger-button" disabled={busy} onClick={disconnect}>Disconnect</button> : <button className="primary" disabled={busy || !port} onClick={connect}>Connect scanner</button>}</section>
-    <form className="scan-bar" onSubmit={e => { e.preventDefault(); void checkIn(token) }}><label><span>CHECK IN</span><input autoFocus value={token} onChange={e => setToken(e.target.value)} placeholder="Scan QR code or enter student ID" /></label><button className="primary">Add to line</button></form>
-    <div className="ceremony-grid">
-      <section className="panel"><div className="panel-heading"><div><p className="eyebrow">ARRIVAL ORDER</p><h3>Procession line</h3></div></div><div className="stage-roster-list">{waiting.map(entry => <div className="stage-roster-row" key={entry.id}><span className="roster-position">{entry.line_position}</span><div><strong>{entry.student.display_name}</strong><small>{entry.student.program}</small></div><span className={`roster-status ${entry.status}`}>{statusLabel(entry.status)}</span><button className="secondary" disabled={entry.status === 'at_stage'} onClick={() => undo(entry)}>Undo</button></div>)}{!waiting.length && <p className="empty">Students appear here in the order they check in.</p>}</div></section>
-      <section className="panel"><div className="panel-heading"><div><p className="eyebrow">MANUAL FALLBACK</p><h3>Ceremony roster</h3></div><label className="roster-search"><span>Search</span><input value={search} onChange={e => setSearch(e.target.value)} placeholder="Name, ID, or program" /></label></div><div className="stage-roster-list">{roster.map(entry => <div className="stage-roster-row" key={entry.id}><span className="roster-position">{entry.position}</span><div><strong>{entry.student.display_name}</strong><small>ID {entry.student.student_id}</small></div><span className={`roster-status ${entry.status}`}>{statusLabel(entry.status)}</span><button className="secondary" disabled={!['expected','skipped'].includes(entry.status)} onClick={() => checkIn(entry.student.student_id)}>{entry.status === 'expected' || entry.status === 'skipped' ? 'Check in' : 'In line'}</button></div>)}</div></section>
-    </div>
-  </>
-}
-
-function StageControl({ ceremonyId, setNotice }: { ceremonyId: number | null; setNotice: (value: string) => void }) {
-  type SerialPort = { device: string; description: string; manufacturer?: string | null }
-  type ScannerStatus = { connected: boolean; port: string | null; baud: number | null; mode: 'checkin' | 'stage' | null; ceremony_id: number | null; scan_count: number; revision: number; last_entry_id: number | null; last_student: string | null; last_error: string | null }
-  const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null)
-  const [draggedEntryId, setDraggedEntryId] = useState<number | null>(null)
-  const [serialPorts, setSerialPorts] = useState<SerialPort[]>([])
-  const [serialPort, setSerialPort] = useState('')
-  const [scannerStatus, setScannerStatus] = useState<ScannerStatus | null>(null)
-  const [scannerBusy, setScannerBusy] = useState(false)
-  const [autoAnnounce, setAutoAnnounce] = useState(true)
-  const [showAnnounced, setShowAnnounced] = useState(false)
-  const [lastStageEntryId, setLastStageEntryId] = useState<number | null>(null)
-  const handledScannerRevision = useRef(0)
-  const audioRef = useRef<HTMLAudioElement | null>(null)
-  const switchingMode = useRef(false)
-  const load = useCallback(() => ceremonyId ? api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(setCeremony).catch((e) => setNotice(e.message)) : Promise.resolve(), [ceremonyId, setNotice])
-  useEffect(() => {
-    let stopped = false
-    let timer: ReturnType<typeof setTimeout>
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
     const poll = async () => {
-      await Promise.all([load(), api.get<ScannerStatus>('/api/scanner/status').then(setScannerStatus).catch(() => undefined)])
-      if (!stopped) timer = setTimeout(poll, 750)
+      await Promise.all([
+        load(),
+        api.get<ScannerStatus>("/api/scanner/status").then(setStatus),
+      ]);
+      if (!stopped) timer = setTimeout(poll, 750);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [load]);
+  const refreshPorts = async () => {
+    try {
+      const found = await api.get<SerialPort[]>("/api/scanner/ports");
+      setPorts(found);
+      setPort((value) => value || found[0]?.device || "");
+    } catch (e) {
+      setNotice((e as Error).message);
     }
-    void poll()
-    return () => { stopped = true; clearTimeout(timer) }
-  }, [load])
+  };
+  useEffect(() => {
+    void refreshPorts();
+  }, []);
+  useEffect(() => {
+    if (!printingLine) return;
+    const finishPrint = () => setPrintingLine(false);
+    window.addEventListener("afterprint", finishPrint);
+    window.print();
+    return () => window.removeEventListener("afterprint", finishPrint);
+  }, [printingLine]);
+  const connect = async () => {
+    const selectedPort = status?.connected ? status.port : port;
+    if (!ceremonyId || !selectedPort) return;
+    setBusy(true);
+    try {
+      setStatus(
+        await api.post("/api/scanner/connect", {
+          port: selectedPort,
+          baud: 9600,
+          ceremony_id: ceremonyId,
+          mode: "checkin",
+        }),
+      );
+      setNotice(
+        "Check-in scanner connected. Students can now scan their QR codes to join the arrival line.",
+      );
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const disconnect = async () => {
+    setBusy(true);
+    try {
+      setStatus(await api.post("/api/scanner/disconnect"));
+      setNotice("Serial scanner disconnected.");
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const playCheckInConfirmation = async (entry: Entry) => {
+    const audio = entry.student.active_audio;
+    if (!audio?.approved || entry.student.pronunciation_status !== "approved") {
+      setNotice(
+        `${entry.student.display_name} checked in, but no approved pronunciation is available.`,
+      );
+      return;
+    }
+    try {
+      if (audioRef.current && !audioRef.current.paused)
+        audioRef.current.pause();
+      audioRef.current = new Audio(audio.url);
+      await audioRef.current.play();
+      setNotice(
+        `${entry.student.display_name} checked in at line position ${entry.line_position}.`,
+      );
+    } catch {
+      setNotice(
+        `${entry.student.display_name} checked in. The browser blocked automatic audio; use the student's saved audio manually if needed.`,
+      );
+    }
+  };
+  const checkIn = async (scanToken: string) => {
+    if (!ceremonyId || !scanToken.trim()) return;
+    try {
+      const entry = await api.post<Entry>(
+        `/api/ceremonies/${ceremonyId}/scan`,
+        { token: scanToken },
+      );
+      setToken("");
+      await playCheckInConfirmation(entry);
+      await load();
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
+  const undo = async (entry: Entry) => {
+    try {
+      await api.post(`/api/entries/${entry.id}/action`, { action: "reset" });
+      setNotice(`${entry.student.display_name}'s check-in was undone.`);
+      await load();
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
+  const waiting =
+    ceremony?.entries
+      .filter((e) => ["checked_in", "at_stage"].includes(e.status))
+      .sort((a, b) => (a.line_position ?? 0) - (b.line_position ?? 0)) ?? [];
+  const reorderWaiting = async (sourceId: number, targetId: number) => {
+    const reorderable = waiting.filter(
+      (entry) => entry.status === "checked_in" || entry.status === "queued",
+    );
+    const sourceIndex = reorderable.findIndex((entry) => entry.id === sourceId);
+    const targetIndex = reorderable.findIndex((entry) => entry.id === targetId);
+    if (
+      sourceIndex < 0 ||
+      targetIndex < 0 ||
+      sourceIndex === targetIndex ||
+      !ceremonyId
+    )
+      return;
+    const entryIds = reorderable.map((entry) => entry.id);
+    const [moved] = entryIds.splice(sourceIndex, 1);
+    entryIds.splice(targetIndex, 0, moved);
+    try {
+      setCeremony(
+        await api.post<CeremonyDetail>(
+          `/api/ceremonies/${ceremonyId}/queue/reorder`,
+          { entry_ids: entryIds },
+        ),
+      );
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    const rows = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        ".ceremony-grid > section:first-child .stage-roster-row",
+      ),
+    );
+    const cleanups = rows.map((row, index) => {
+      const entry = waiting[index];
+      if (!entry || entry.status === "at_stage") return () => undefined;
+      let sourceId: number | null = null;
+      const onDragStart = (event: DragEvent) => {
+        sourceId = entry.id;
+        setDraggedEntryId(entry.id);
+        row.classList.add("dragging");
+        event.dataTransfer?.setData("text/plain", String(entry.id));
+        if (event.dataTransfer) event.dataTransfer.effectAllowed = "move";
+      };
+      const onDragEnd = () => {
+        sourceId = null;
+        setDraggedEntryId(null);
+        row.classList.remove("dragging");
+      };
+      const onDragOver = (event: DragEvent) => {
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = "move";
+      };
+      const onDrop = (event: DragEvent) => {
+        event.preventDefault();
+        const draggedId =
+          sourceId ?? Number(event.dataTransfer?.getData("text/plain"));
+        if (draggedId) void reorderWaiting(draggedId, entry.id);
+      };
+      row.draggable = true;
+      row.classList.add("draggable");
+      row.addEventListener("dragstart", onDragStart);
+      row.addEventListener("dragend", onDragEnd);
+      row.addEventListener("dragover", onDragOver);
+      row.addEventListener("drop", onDrop);
+      return () => {
+        row.draggable = false;
+        row.classList.remove("draggable", "dragging");
+        row.removeEventListener("dragstart", onDragStart);
+        row.removeEventListener("dragend", onDragEnd);
+        row.removeEventListener("dragover", onDragOver);
+        row.removeEventListener("drop", onDrop);
+      };
+    });
+    return () => cleanups.forEach((cleanup) => cleanup());
+  }, [waiting, reorderWaiting]);
+  const scannerReady =
+    status?.connected &&
+    status.mode === "checkin" &&
+    status.ceremony_id === ceremonyId;
+  useEffect(() => {
+    if (
+      !status?.connected ||
+      scannerReady ||
+      !status.port ||
+      !ceremonyId ||
+      switchingMode.current
+    )
+      return;
+    switchingMode.current = true;
+    setBusy(true);
+    api
+      .post<ScannerStatus>("/api/scanner/connect", {
+        port: status.port,
+        baud: 9600,
+        ceremony_id: ceremonyId,
+        mode: "checkin",
+      })
+      .then((next) => {
+        handledScannerRevision.current = next.revision;
+        setStatus(next);
+        setNotice("Scanner automatically switched to check-in mode.");
+      })
+      .catch((error) =>
+        setNotice(
+          `Could not switch scanner to check-in mode: ${error.message}`,
+        ),
+      )
+      .finally(() => {
+        switchingMode.current = false;
+        setBusy(false);
+      });
+  }, [
+    status?.connected,
+    status?.mode,
+    status?.ceremony_id,
+    status?.port,
+    scannerReady,
+    ceremonyId,
+    setNotice,
+  ]);
+  useEffect(() => {
+    if (!status) return;
+    if (handledScannerRevision.current === null) {
+      handledScannerRevision.current = status.revision;
+      return;
+    }
+    if (status.revision <= handledScannerRevision.current) return;
+    if (status.last_error) {
+      handledScannerRevision.current = status.revision;
+      setNotice(`Scanner: ${status.last_error}`);
+      return;
+    }
+    if (!scannerReady || !status.last_entry_id || !ceremony) return;
+    const entry = ceremony.entries.find(
+      (item) => item.id === status.last_entry_id,
+    );
+    if (!entry || !["checked_in", "at_stage"].includes(entry.status)) return;
+    handledScannerRevision.current = status.revision;
+    void playCheckInConfirmation(entry);
+  }, [status?.revision, ceremony, scannerReady]);
+  const roster =
+    ceremony?.entries
+      .filter((e) => {
+        const q = search.trim().toLowerCase();
+        return (
+          !q ||
+          `${e.student.display_name} ${e.student.student_id} ${e.student.program}`
+            .toLowerCase()
+            .includes(q)
+        );
+      })
+      .sort((a, b) => a.position - b.position) ?? [];
+  if (!ceremonyId)
+    return (
+      <div className="empty-state tall">
+        <span>✓</span>
+        <h2>Select a ceremony first</h2>
+        <p>Use the ceremony selector in the upper-right corner.</p>
+      </div>
+    );
+  return (
+    <>
+      <section
+        className={`panel scanner-panel${status?.connected && !scannerReady ? " scanner-wrong-mode" : ""}`}
+      >
+        <div>
+          <p className="eyebrow">SERIAL QR SCANNER · CHECK-IN MODE</p>
+          <strong>
+            {scannerReady
+              ? `Ready for student QR scans · ${status.port}`
+              : status?.connected
+                ? `Scanner is currently in ${status.mode} mode`
+                : "Scanner disconnected"}
+          </strong>
+          {status?.connected && !scannerReady && (
+            <small>Switch it to check-in mode before students scan.</small>
+          )}
+          {scannerReady && status?.last_student && (
+            <small>Last student: {status.last_student}</small>
+          )}
+        </div>
+        <select
+          value={status?.connected ? (status.port ?? "") : port}
+          disabled={busy || !!status?.connected}
+          onChange={(e) => setPort(e.target.value)}
+        >
+          <option value="">Select serial port</option>
+          {ports.map((p) => (
+            <option value={p.device} key={p.device}>
+              {p.description} · {p.device}
+            </option>
+          ))}
+        </select>
+        <button
+          className="secondary"
+          disabled={busy || !!status?.connected}
+          onClick={refreshPorts}
+        >
+          Refresh ports
+        </button>
+        {status?.connected && !scannerReady ? (
+          <button className="primary" disabled={busy} onClick={connect}>
+            {busy ? "Switching…" : "Switch to check-in"}
+          </button>
+        ) : status?.connected ? (
+          <button
+            className="danger-button"
+            disabled={busy}
+            onClick={disconnect}
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            className="primary"
+            disabled={busy || !port}
+            onClick={connect}
+          >
+            Connect scanner
+          </button>
+        )}
+      </section>
+      <div className="ceremony-grid">
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">ARRIVAL ORDER</p>
+              <div className="procession-title">
+                <h3>Procession line</h3>
+                <span className="stage-status">
+                  {waiting.length} of {ceremony?.entries.length ?? 0} arrived
+                </span>
+                <button
+                  type="button"
+                  className="qr-icon-button print-hidden"
+                  aria-label="Print procession line"
+                  title="Print procession line"
+                  onClick={() => setPrintingLine(true)}
+                >
+                  <i className="bi bi-printer" aria-hidden="true" />
+                </button>
+              </div>
+            </div>
+          </div>
+          <div className="stage-roster-list">
+            {waiting.map((entry) => (
+              <div className="stage-roster-row" key={entry.id}>
+                <span className="roster-position">{entry.line_position}</span>
+                <div>
+                  <strong>{entry.student.display_name}</strong>
+                  <small>{entry.student.program}</small>
+                </div>
+                <span className={`roster-status ${entry.status}`}>
+                  {statusLabel(entry.status)}
+                  <small className="check-in-time">
+                    {entry.checked_in_at
+                      ? new Date(entry.checked_in_at).toLocaleTimeString([], {
+                          hour: "numeric",
+                          minute: "2-digit",
+                        })
+                      : ""}
+                  </small>
+                </span>
+                <button
+                  className="secondary"
+                  disabled={entry.status === "at_stage"}
+                  onClick={() => undo(entry)}
+                >
+                  Undo
+                </button>
+              </div>
+            ))}
+            {!waiting.length && (
+              <p className="empty">
+                Students appear here in the order they check in.
+              </p>
+            )}
+          </div>
+        </section>
+        <section className="panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">MANUAL FALLBACK</p>
+              <h3>Ceremony roster</h3>
+            </div>
+            <label className="roster-search">
+              <span>Search</span>
+              <input
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Name, ID, or program"
+              />
+            </label>
+          </div>
+          <div className="stage-roster-list">
+            {roster.map((entry) => (
+              <div className="stage-roster-row" key={entry.id}>
+                <span className="roster-position">{entry.position}</span>
+                <div>
+                  <strong>{entry.student.display_name}</strong>
+                  <small>ID {entry.student.student_id}</small>
+                </div>
+                <span className={`roster-status ${entry.status}`}>
+                  {statusLabel(entry.status)}
+                </span>
+                <button
+                  className="secondary"
+                  disabled={!["expected", "skipped"].includes(entry.status)}
+                  onClick={() => checkIn(entry.student.student_id)}
+                >
+                  {entry.status === "expected" || entry.status === "skipped"
+                    ? "Check in"
+                    : "In line"}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      </div>
+      {printingLine && ceremony && (
+        <section className="print-procession-line" aria-label="Procession line printout">
+          <h1>{ceremony.name} procession line</h1>
+          <p>{ceremony.event_date}{ceremony.location ? ` · ${ceremony.location}` : ""}</p>
+          <table>
+            <thead>
+              <tr><th>Position</th><th>Student</th><th>Student ID</th><th>Checked in</th></tr>
+            </thead>
+            <tbody>
+              {waiting.map((entry) => (
+                <tr key={entry.id}>
+                  <td>{entry.line_position ?? "-"}</td>
+                  <td>{entry.student.display_name}</td>
+                  <td>{entry.student.student_id}</td>
+                  <td>{entry.checked_in_at ? new Date(entry.checked_in_at).toLocaleString() : "-"}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+    </>
+  );
+}
+
+function StageControl({
+  ceremonyId,
+  setNotice,
+}: {
+  ceremonyId: number | null;
+  setNotice: (value: string) => void;
+}) {
+  type SerialPort = {
+    device: string;
+    description: string;
+    manufacturer?: string | null;
+  };
+  type ScannerStatus = {
+    connected: boolean;
+    port: string | null;
+    baud: number | null;
+    mode: "checkin" | "stage" | null;
+    ceremony_id: number | null;
+    scan_count: number;
+    revision: number;
+    last_entry_id: number | null;
+    last_student: string | null;
+    last_error: string | null;
+  };
+  const [ceremony, setCeremony] = useState<CeremonyDetail | null>(null);
+  const [draggedEntryId, setDraggedEntryId] = useState<number | null>(null);
+  const [serialPorts, setSerialPorts] = useState<SerialPort[]>([]);
+  const [serialPort, setSerialPort] = useState("");
+  const [scannerStatus, setScannerStatus] = useState<ScannerStatus | null>(
+    null,
+  );
+  const [scannerBusy, setScannerBusy] = useState(false);
+  const [autoAnnounce, setAutoAnnounce] = useState(true);
+  const [showAnnounced, setShowAnnounced] = useState(false);
+  const [lastStageEntryId, setLastStageEntryId] = useState<number | null>(null);
+  const handledScannerRevision = useRef(0);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const switchingMode = useRef(false);
+  const load = useCallback(
+    () =>
+      ceremonyId
+        ? api
+            .get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`)
+            .then(setCeremony)
+            .catch((e) => setNotice(e.message))
+        : Promise.resolve(),
+    [ceremonyId, setNotice],
+  );
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      await Promise.all([
+        load(),
+        api
+          .get<ScannerStatus>("/api/scanner/status")
+          .then(setScannerStatus)
+          .catch(() => undefined),
+      ]);
+      if (!stopped) timer = setTimeout(poll, 750);
+    };
+    void poll();
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+    };
+  }, [load]);
   const loadSerialPorts = async () => {
     try {
-      const ports = await api.get<SerialPort[]>('/api/scanner/ports')
-      setSerialPorts(ports)
-      setSerialPort(current => current || ports[0]?.device || '')
-      if (!ports.length) setNotice('No serial scanner ports were detected.')
-    } catch (e) { setNotice((e as Error).message) }
-  }
-  useEffect(() => { void loadSerialPorts() }, [])
-  const connectScanner = async () => {
-    const selectedPort = scannerStatus?.connected ? scannerStatus.port : serialPort
-    if (!ceremonyId || !selectedPort) return
-    setScannerBusy(true)
-    try {
-      const status = await api.post<ScannerStatus>('/api/scanner/connect', { port: selectedPort, baud: 9600, ceremony_id: ceremonyId, mode: 'stage' })
-      handledScannerRevision.current = status.revision
-      setScannerStatus(status); setNotice('Stage scanner ready. A scan will display that student and pronounce their approved audio.')
-    } catch (e) { setNotice((e as Error).message) }
-    finally { setScannerBusy(false) }
-  }
-  const disconnectScanner = async () => {
-    setScannerBusy(true)
-    try { setScannerStatus(await api.post<ScannerStatus>('/api/scanner/disconnect')); setNotice('Serial scanner disconnected.') }
-    catch (e) { setNotice((e as Error).message) }
-    finally { setScannerBusy(false) }
-  }
-  const activeQueue = ceremony?.entries.filter((entry) => entry.status === 'checked_in').sort((a,b) => (a.line_position ?? 0) - (b.line_position ?? 0)) ?? []
-  const stageScannerReady = scannerStatus?.connected && scannerStatus.mode === 'stage' && scannerStatus.ceremony_id === ceremonyId
+      const ports = await api.get<SerialPort[]>("/api/scanner/ports");
+      setSerialPorts(ports);
+      setSerialPort((current) => current || ports[0]?.device || "");
+      if (!ports.length) setNotice("No serial scanner ports were detected.");
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
   useEffect(() => {
-    if (!scannerStatus?.connected || stageScannerReady || !scannerStatus.port || !ceremonyId || switchingMode.current) return
-    switchingMode.current = true
-    setScannerBusy(true)
-    api.post<ScannerStatus>('/api/scanner/connect', { port: scannerStatus.port, baud: 9600, ceremony_id: ceremonyId, mode: 'stage' })
-      .then(next => { handledScannerRevision.current = next.revision; setScannerStatus(next); setNotice('Scanner automatically switched to stage mode.') })
-      .catch(error => setNotice(`Could not switch scanner to stage mode: ${error.message}`))
-      .finally(() => { switchingMode.current = false; setScannerBusy(false) })
-  }, [scannerStatus?.connected, scannerStatus?.mode, scannerStatus?.ceremony_id, scannerStatus?.port, stageScannerReady, ceremonyId, setNotice])
-  const activeAtStage = ceremony?.entries.find(entry => entry.status === 'at_stage')
-  const current = activeAtStage ?? ceremony?.entries.find(entry => entry.id === lastStageEntryId)
-  const undoCheckIn = async (entry: Entry) => {
-    if (entry.status === 'checked_in' && !window.confirm(`Skip ${entry.student.display_name} and remove them from the arrival line?`)) return
-    if (lastStageEntryId === entry.id) setLastStageEntryId(null)
-    await action(entry, 'reset')
-  }
-  const skipEntry = async (entry: Entry) => {
-    if (!window.confirm(`Skip ${entry.student.display_name} and remove them from the arrival line?`)) return
-    await action(entry, 'skip')
-  }
-  const reorderQueue = async (sourceId: number, targetId: number) => {
-    if (!ceremonyId || sourceId === targetId) return
-    const entryIds = activeQueue.map((entry) => entry.id)
-    const sourceIndex = entryIds.indexOf(sourceId)
-    const targetIndex = entryIds.indexOf(targetId)
-    if (sourceIndex < 0 || targetIndex < 0) return
-    const [moved] = entryIds.splice(sourceIndex, 1)
-    entryIds.splice(targetIndex, 0, moved)
-    setDraggedEntryId(null)
+    void loadSerialPorts();
+  }, []);
+  const connectScanner = async () => {
+    const selectedPort = scannerStatus?.connected
+      ? scannerStatus.port
+      : serialPort;
+    if (!ceremonyId || !selectedPort) return;
+    setScannerBusy(true);
     try {
-      const updated = await api.post<CeremonyDetail>(`/api/ceremonies/${ceremonyId}/queue/reorder`, { entry_ids: entryIds })
-      setCeremony(updated)
-    } catch (e) { setNotice((e as Error).message); await load() }
-  }
+      const status = await api.post<ScannerStatus>("/api/scanner/connect", {
+        port: selectedPort,
+        baud: 9600,
+        ceremony_id: ceremonyId,
+        mode: "stage",
+      });
+      handledScannerRevision.current = status.revision;
+      setScannerStatus(status);
+      setNotice(
+        "Stage scanner ready. A scan will display that student and pronounce their approved audio.",
+      );
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setScannerBusy(false);
+    }
+  };
+  const disconnectScanner = async () => {
+    setScannerBusy(true);
+    try {
+      setScannerStatus(
+        await api.post<ScannerStatus>("/api/scanner/disconnect"),
+      );
+      setNotice("Serial scanner disconnected.");
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setScannerBusy(false);
+    }
+  };
+  const activeQueue =
+    ceremony?.entries
+      .filter((entry) => entry.status === "checked_in")
+      .sort((a, b) => (a.line_position ?? 0) - (b.line_position ?? 0)) ?? [];
+  const stageScannerReady =
+    scannerStatus?.connected &&
+    scannerStatus.mode === "stage" &&
+    scannerStatus.ceremony_id === ceremonyId;
+  useEffect(() => {
+    if (
+      !scannerStatus?.connected ||
+      stageScannerReady ||
+      !scannerStatus.port ||
+      !ceremonyId ||
+      switchingMode.current
+    )
+      return;
+    switchingMode.current = true;
+    setScannerBusy(true);
+    api
+      .post<ScannerStatus>("/api/scanner/connect", {
+        port: scannerStatus.port,
+        baud: 9600,
+        ceremony_id: ceremonyId,
+        mode: "stage",
+      })
+      .then((next) => {
+        handledScannerRevision.current = next.revision;
+        setScannerStatus(next);
+        setNotice("Scanner automatically switched to stage mode.");
+      })
+      .catch((error) =>
+        setNotice(`Could not switch scanner to stage mode: ${error.message}`),
+      )
+      .finally(() => {
+        switchingMode.current = false;
+        setScannerBusy(false);
+      });
+  }, [
+    scannerStatus?.connected,
+    scannerStatus?.mode,
+    scannerStatus?.ceremony_id,
+    scannerStatus?.port,
+    stageScannerReady,
+    ceremonyId,
+    setNotice,
+  ]);
+  const activeAtStage = ceremony?.entries.find(
+    (entry) => entry.status === "at_stage",
+  );
+  const current =
+    activeAtStage ??
+    ceremony?.entries.find((entry) => entry.id === lastStageEntryId);
+  const undoCheckIn = async (entry: Entry) => {
+    if (
+      entry.status === "checked_in" &&
+      !window.confirm(
+        `Skip ${entry.student.display_name} and remove them from the arrival line?`,
+      )
+    )
+      return;
+    if (lastStageEntryId === entry.id) setLastStageEntryId(null);
+    await action(entry, "reset");
+  };
+  const skipEntry = async (entry: Entry) => {
+    if (
+      !window.confirm(
+        `Skip ${entry.student.display_name} and remove them from the arrival line?`,
+      )
+    )
+      return;
+    await action(entry, "skip");
+  };
+  const reorderQueue = async (sourceId: number, targetId: number) => {
+    if (!ceremonyId || sourceId === targetId) return;
+    const entryIds = activeQueue.map((entry) => entry.id);
+    const sourceIndex = entryIds.indexOf(sourceId);
+    const targetIndex = entryIds.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0) return;
+    const [moved] = entryIds.splice(sourceIndex, 1);
+    entryIds.splice(targetIndex, 0, moved);
+    setDraggedEntryId(null);
+    try {
+      const updated = await api.post<CeremonyDetail>(
+        `/api/ceremonies/${ceremonyId}/queue/reorder`,
+        { entry_ids: entryIds },
+      );
+      setCeremony(updated);
+    } catch (e) {
+      setNotice((e as Error).message);
+      await load();
+    }
+  };
   const moveQueueEntry = (entryId: number, offset: number) => {
-    const index = activeQueue.findIndex((entry) => entry.id === entryId)
-    const target = activeQueue[index + offset]
-    if (index < 0 || !target || index + offset < 0) return
-    void reorderQueue(entryId, target.id)
-  }
+    const index = activeQueue.findIndex((entry) => entry.id === entryId);
+    const target = activeQueue[index + offset];
+    if (index < 0 || !target || index + offset < 0) return;
+    void reorderQueue(entryId, target.id);
+  };
   const action = async (entry: Entry, value: string) => {
     try {
-      if (['announce', 'replay'].includes(value)) {
-        if (audioRef.current && !audioRef.current.paused) throw new Error('Wait for the current announcement to finish.')
-        const latest = await api.get<CeremonyDetail>(`/api/ceremonies/${entry.ceremony_id}`)
-        const fresh = latest.entries.find(item => item.id === entry.id)
-        if (!fresh?.student.active_audio?.approved || fresh.student.pronunciation_status !== 'approved') throw new Error('Audio is missing or needs review. Approve a pronunciation first.')
-        if (value === 'announce' && fresh.status === 'announced') throw new Error('Student has already been announced.')
-        audioRef.current = new Audio(fresh.student.active_audio.url)
-        await audioRef.current.play()
+      if (["announce", "replay"].includes(value)) {
+        if (audioRef.current && !audioRef.current.paused)
+          throw new Error("Wait for the current announcement to finish.");
+        const latest = await api.get<CeremonyDetail>(
+          `/api/ceremonies/${entry.ceremony_id}`,
+        );
+        const fresh = latest.entries.find((item) => item.id === entry.id);
+        if (
+          !fresh?.student.active_audio?.approved ||
+          fresh.student.pronunciation_status !== "approved"
+        )
+          throw new Error(
+            "Audio is missing or needs review. Approve a pronunciation first.",
+          );
+        if (value === "announce" && fresh.status === "announced")
+          throw new Error("Student has already been announced.");
+        audioRef.current = new Audio(fresh.student.active_audio.url);
+        await audioRef.current.play();
       }
-      await api.post(`/api/entries/${entry.id}/action`, { action: value })
-      await load()
-      return true
-    } catch (e) { setNotice((e as Error).message); return false }
-  }
-  const announceFromArrivalLine = async (entry: Entry) => {
-    if (!ceremonyId) return
-    try {
-      const staged = await api.post<Entry>(`/api/ceremonies/${ceremonyId}/stage-scan`, { token: entry.student.student_id })
-      setLastStageEntryId(staged.id)
-      await load()
-      await action(staged, 'announce')
-    } catch (e) { setNotice((e as Error).message) }
-  }
-  const announcedStudents = ceremony?.entries.filter((entry) => entry.status === 'announced').sort((a, b) => (a.announced_at ?? '').localeCompare(b.announced_at ?? '')) ?? []
-  const returnToLine = async (entry: Entry) => {
-    if (!await action(entry, 'return_to_line')) return
-    setShowAnnounced(false)
-    setNotice(`${entry.student.display_name} returned to the front of the arrival line.`)
-  }
-  useEffect(() => {
-    if (!scannerStatus || scannerStatus.revision <= handledScannerRevision.current) return
-    if (scannerStatus.last_error) {
-      handledScannerRevision.current = scannerStatus.revision
-      setNotice(`Scanner: ${scannerStatus.last_error}`)
-      return
+      await api.post(`/api/entries/${entry.id}/action`, { action: value });
+      await load();
+      return true;
+    } catch (e) {
+      setNotice((e as Error).message);
+      return false;
     }
-    if (!scannerStatus.last_entry_id || scannerStatus.ceremony_id !== ceremonyId || scannerStatus.mode !== 'stage' || !ceremonyId) return
-    const revision = scannerStatus.revision
-    const entryId = scannerStatus.last_entry_id
-    void api.get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`).then(async latest => {
-      const scannedEntry = latest.entries.find(entry => entry.id === entryId)
-      if (!scannedEntry || scannedEntry.status !== 'at_stage') return
-      handledScannerRevision.current = revision
-      setLastStageEntryId(scannedEntry.id)
-      setCeremony(latest)
-      if (autoAnnounce) await action(scannedEntry, 'announce')
-      else setNotice(`${scannedEntry.student.display_name} is ready at the stage.`)
-    }).catch(error => setNotice(error.message))
-  }, [scannerStatus?.revision, autoAnnounce, ceremonyId])
-  if (!ceremonyId) return <div className="empty-state tall"><span>▶</span><h2>Select a ceremony first</h2><p>Use the ceremony selector in the upper-right corner.</p></div>
-  return <>
-    <section className={`panel scanner-panel${scannerStatus?.connected && !stageScannerReady ? ' scanner-wrong-mode' : ''}`}><div><p className="eyebrow">SERIAL QR SCANNER · STAGE MODE</p><strong>{stageScannerReady ? `Ready for stage scans · ${scannerStatus.port}` : scannerStatus?.connected ? `Scanner is currently in ${scannerStatus.mode} mode` : 'Scanner disconnected'}</strong>{scannerStatus?.connected && !stageScannerReady && <small>Switch it to stage mode before the graduate scans.</small>}{stageScannerReady && scannerStatus?.last_student && <small>Last student: {scannerStatus.last_student}</small>}</div><select aria-label="Serial scanner port" value={scannerStatus?.connected ? scannerStatus.port ?? '' : serialPort} disabled={scannerBusy || !!scannerStatus?.connected} onChange={event => setSerialPort(event.target.value)}><option value="">Select serial port</option>{serialPorts.map(port => <option value={port.device} key={port.device}>{port.description} · {port.device}</option>)}</select><button className="secondary" disabled={scannerBusy || !!scannerStatus?.connected} onClick={loadSerialPorts}>Refresh ports</button>{scannerStatus?.connected && !stageScannerReady ? <button className="primary" disabled={scannerBusy} onClick={connectScanner}>{scannerBusy ? 'Switching…' : 'Switch to stage mode'}</button> : scannerStatus?.connected ? <button className="danger-button" disabled={scannerBusy} onClick={disconnectScanner}>Disconnect</button> : <button className="primary" disabled={scannerBusy || !serialPort} onClick={connectScanner}>{scannerBusy ? 'Connecting…' : 'Connect scanner'}</button>}<label className="auto-announce"><input type="checkbox" checked={autoAnnounce} onChange={event => setAutoAnnounce(event.target.checked)} /> Automatically pronounce approved audio after stage scan</label></section>
-    <div className="stage-grid">
-      <section className="now-card">
-        <p className="eyebrow light">NOW AT THE STAGE</p>
-        {current ? <><span className="queue-number">Line #{current.line_position ?? current.position}</span><h3>{current.student.announcement_text || current.student.display_name}</h3>{current.student.native_name && <p className="native" dir="auto">{current.student.native_name}</p>}<p className="program">{current.student.program}</p><p className="program">Student ID {current.student.student_id}</p><div className="phonetic"><small>PRONUNCIATION GUIDE</small><strong>{current.student.phonetic_spelling || 'No phonetic guide provided'}</strong></div><div className="stage-buttons"><button className="announce" disabled={!current.student.active_audio} onClick={() => action(current, current.status === 'announced' ? 'replay' : 'announce')}>▶ {current.status === 'announced' ? 'Replay name' : 'Announce name'}</button>{current.status !== 'announced' && <button onClick={() => action(current, 'skip')}>Skip</button>}<button onClick={() => undoCheckIn(current)}>Undo</button></div>{!current.student.active_audio && <p className="audio-warning">Approved audio is missing. Use the pronunciation guide.</p>}</> : <div className="stage-empty"><span>✓</span><h3>Waiting for the next graduate</h3><p>Scan a student ID or choose someone from the roster.</p></div>}
+  };
+  const announceFromArrivalLine = async (entry: Entry) => {
+    if (!ceremonyId) return;
+    try {
+      const staged = await api.post<Entry>(
+        `/api/ceremonies/${ceremonyId}/stage-scan`,
+        { token: entry.student.student_id },
+      );
+      setLastStageEntryId(staged.id);
+      await load();
+      await action(staged, "announce");
+    } catch (e) {
+      setNotice((e as Error).message);
+    }
+  };
+  const announcedStudents =
+    ceremony?.entries
+      .filter((entry) => entry.status === "announced")
+      .sort((a, b) =>
+        (a.announced_at ?? "").localeCompare(b.announced_at ?? ""),
+      ) ?? [];
+  const returnToLine = async (entry: Entry) => {
+    if (!(await action(entry, "return_to_line"))) return;
+    setShowAnnounced(false);
+    setNotice(
+      `${entry.student.display_name} returned to the front of the arrival line.`,
+    );
+  };
+  useEffect(() => {
+    if (
+      !scannerStatus ||
+      scannerStatus.revision <= handledScannerRevision.current
+    )
+      return;
+    if (scannerStatus.last_error) {
+      handledScannerRevision.current = scannerStatus.revision;
+      setNotice(`Scanner: ${scannerStatus.last_error}`);
+      return;
+    }
+    if (
+      !scannerStatus.last_entry_id ||
+      scannerStatus.ceremony_id !== ceremonyId ||
+      scannerStatus.mode !== "stage" ||
+      !ceremonyId
+    )
+      return;
+    const revision = scannerStatus.revision;
+    const entryId = scannerStatus.last_entry_id;
+    void api
+      .get<CeremonyDetail>(`/api/ceremonies/${ceremonyId}`)
+      .then(async (latest) => {
+        const scannedEntry = latest.entries.find(
+          (entry) => entry.id === entryId,
+        );
+        if (!scannedEntry || scannedEntry.status !== "at_stage") return;
+        handledScannerRevision.current = revision;
+        setLastStageEntryId(scannedEntry.id);
+        setCeremony(latest);
+        if (autoAnnounce) await action(scannedEntry, "announce");
+        else
+          setNotice(
+            `${scannedEntry.student.display_name} is ready at the stage.`,
+          );
+      })
+      .catch((error) => setNotice(error.message));
+  }, [scannerStatus?.revision, autoAnnounce, ceremonyId]);
+  if (!ceremonyId)
+    return (
+      <div className="empty-state tall">
+        <span>▶</span>
+        <h2>Select a ceremony first</h2>
+        <p>Use the ceremony selector in the upper-right corner.</p>
+      </div>
+    );
+  return (
+    <>
+      <section
+        className={`panel scanner-panel${scannerStatus?.connected && !stageScannerReady ? " scanner-wrong-mode" : ""}`}
+      >
+        <div>
+          <p className="eyebrow">SERIAL QR SCANNER · STAGE MODE</p>
+          <strong>
+            {stageScannerReady
+              ? `Ready for stage scans · ${scannerStatus.port}`
+              : scannerStatus?.connected
+                ? `Scanner is currently in ${scannerStatus.mode} mode`
+                : "Scanner disconnected"}
+          </strong>
+          {scannerStatus?.connected && !stageScannerReady && (
+            <small>Switch it to stage mode before the graduate scans.</small>
+          )}
+          {stageScannerReady && scannerStatus?.last_student && (
+            <small>Last student: {scannerStatus.last_student}</small>
+          )}
+        </div>
+        <select
+          aria-label="Serial scanner port"
+          value={
+            scannerStatus?.connected ? (scannerStatus.port ?? "") : serialPort
+          }
+          disabled={scannerBusy || !!scannerStatus?.connected}
+          onChange={(event) => setSerialPort(event.target.value)}
+        >
+          <option value="">Select serial port</option>
+          {serialPorts.map((port) => (
+            <option value={port.device} key={port.device}>
+              {port.description} · {port.device}
+            </option>
+          ))}
+        </select>
+        <button
+          className="secondary"
+          disabled={scannerBusy || !!scannerStatus?.connected}
+          onClick={loadSerialPorts}
+        >
+          Refresh ports
+        </button>
+        {scannerStatus?.connected && !stageScannerReady ? (
+          <button
+            className="primary"
+            disabled={scannerBusy}
+            onClick={connectScanner}
+          >
+            {scannerBusy ? "Switching…" : "Switch to stage mode"}
+          </button>
+        ) : scannerStatus?.connected ? (
+          <button
+            className="danger-button"
+            disabled={scannerBusy}
+            onClick={disconnectScanner}
+          >
+            Disconnect
+          </button>
+        ) : (
+          <button
+            className="primary"
+            disabled={scannerBusy || !serialPort}
+            onClick={connectScanner}
+          >
+            {scannerBusy ? "Connecting…" : "Connect scanner"}
+          </button>
+        )}
+        <label className="auto-announce">
+          <input
+            type="checkbox"
+            checked={autoAnnounce}
+            onChange={(event) => setAutoAnnounce(event.target.checked)}
+          />{" "}
+          Automatically pronounce approved audio after stage scan
+        </label>
       </section>
-      <section className="panel queue-panel"><div className="panel-heading"><div><p className="eyebrow">UP NEXT</p><h3>Arrival line</h3><small>Check-in order is the default. Drag students or use the arrows to adjust it.</small></div><span>{activeQueue.length} waiting</span></div><div className="queue-list">{activeQueue.map((entry, index) => <div className={`queue-row draggable${draggedEntryId === entry.id ? ' dragging' : ''}`} style={{ gridTemplateColumns: '20px 24px minmax(0, 1fr) 12px auto auto auto', gap: '5px' }} draggable key={entry.id} onDragStart={(event) => { event.dataTransfer.effectAllowed = 'move'; event.dataTransfer.setData('text/plain', String(entry.id)); setDraggedEntryId(entry.id) }} onDragEnd={() => setDraggedEntryId(null)} onDragOver={(event) => { event.preventDefault(); event.dataTransfer.dropEffect = 'move' }} onDrop={(event) => { event.preventDefault(); const sourceId = Number(event.dataTransfer.getData('text/plain')) || draggedEntryId; if (sourceId) void reorderQueue(sourceId, entry.id) }}><span className="drag-handle" title="Drag to reorder">⠿</span><span>{entry.line_position}</span><div><strong>{entry.student.display_name}</strong><small>ID {entry.student.student_id} · {entry.student.program || 'Program not set'}</small></div><span className={entry.student.active_audio ? 'ready-dot' : 'warning-dot'} /><button type="button" className="secondary queue-announce-button" disabled={!entry.student.active_audio} onClick={() => void announceFromArrivalLine(entry)}>Announce</button><span className="queue-move-buttons"><button className="text-button" disabled={index === 0} onClick={() => moveQueueEntry(entry.id, -1)} aria-label={`Move ${entry.student.display_name} earlier`}>↑</button><button className="text-button" disabled={index === activeQueue.length - 1} onClick={() => moveQueueEntry(entry.id, 1)} aria-label={`Move ${entry.student.display_name} later`}>↓</button></span><button className="text-button" onClick={() => undoCheckIn(entry)}>Skip</button></div>)}{!activeQueue.length && <p className="empty">Students checked in at the arrival station will appear here.</p>}</div><div className="all-status"><strong>Processional progress</strong><div className="progress"><span style={{ width: `${ceremony?.entries.length ? ((ceremony.entries.filter(e => e.status === 'announced').length / ceremony.entries.length) * 100) : 0}%` }} /></div><small>{ceremony?.entries.filter(e => e.status === 'announced').length ?? 0} of {ceremony?.entries.length ?? 0} <button type="button" className="text-button announced-progress-link" onClick={() => setShowAnnounced(true)}>announced</button></small></div></section>
-    </div>
-    {showAnnounced && <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && setShowAnnounced(false)}><section className="modal small-modal" role="dialog" aria-modal="true" aria-labelledby="announced-students-title"><div className="modal-heading"><div><p className="eyebrow">PROCESSIONAL HISTORY</p><h2 id="announced-students-title">Announced students</h2></div><button type="button" className="close" aria-label="Close announced students" onClick={() => setShowAnnounced(false)}>×</button></div><div className="form-grid single">{announcedStudents.map((entry) => <div className="stage-roster-row announced-student-row" style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }} key={entry.id}><div><strong>{entry.student.display_name}</strong><small>Student ID {entry.student.student_id}{entry.student.program ? ` · ${entry.student.program}` : ''}</small></div><button type="button" className="secondary" onClick={() => void returnToLine(entry)}>Return to arrival line</button></div>)}{!announcedStudents.length && <p className="empty">No students have been announced yet.</p>}</div></section></div>}
-  </>
+      <div className="stage-grid">
+        <section className="now-card">
+          <p className="eyebrow light">NOW AT THE STAGE</p>
+          {current ? (
+            <>
+              <span className="queue-number">
+                Line #{current.line_position ?? current.position}
+              </span>
+              <h3>
+                {current.student.announcement_text ||
+                  current.student.display_name}
+              </h3>
+              {current.student.native_name && (
+                <p className="native" dir="auto">
+                  {current.student.native_name}
+                </p>
+              )}
+              <p className="program">{current.student.program}</p>
+              <p className="program">Student ID {current.student.student_id}</p>
+              <div className="phonetic">
+                <small>PRONUNCIATION GUIDE</small>
+                <strong>
+                  {current.student.phonetic_spelling ||
+                    "No phonetic guide provided"}
+                </strong>
+              </div>
+              <div className="stage-buttons">
+                <button
+                  className="announce"
+                  disabled={!current.student.active_audio}
+                  onClick={() =>
+                    action(
+                      current,
+                      current.status === "announced" ? "replay" : "announce",
+                    )
+                  }
+                >
+                  ▶{" "}
+                  {current.status === "announced"
+                    ? "Replay name"
+                    : "Announce name"}
+                </button>
+                {current.status !== "announced" && (
+                  <button onClick={() => action(current, "skip")}>Skip</button>
+                )}
+                <button onClick={() => undoCheckIn(current)}>Undo</button>
+              </div>
+              {!current.student.active_audio && (
+                <p className="audio-warning">
+                  Approved audio is missing. Use the pronunciation guide.
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="stage-empty">
+              <span>✓</span>
+              <h3>Waiting for the next graduate</h3>
+              <p>Scan a student ID or choose someone from the roster.</p>
+            </div>
+          )}
+        </section>
+        <section className="panel queue-panel">
+          <div className="panel-heading">
+            <div>
+              <p className="eyebrow">UP NEXT</p>
+              <div className="procession-title">
+                <h3>Arrival line</h3>
+                <span className="stage-status">
+                  {activeQueue.length} of {ceremony?.entries.length ?? 0} waiting
+                </span>
+              </div>
+              <small>
+                Check-in order is the default. Drag students or use the arrows
+                to adjust it.
+              </small>
+            </div>
+          </div>
+          <div className="queue-list">
+            {activeQueue.map((entry, index) => (
+              <div
+                className={`queue-row draggable${draggedEntryId === entry.id ? " dragging" : ""}`}
+                style={{
+                  gridTemplateColumns:
+                    "20px 24px minmax(0, 1fr) 12px auto auto auto",
+                  gap: "5px",
+                }}
+                draggable
+                key={entry.id}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", String(entry.id));
+                  setDraggedEntryId(entry.id);
+                }}
+                onDragEnd={() => setDraggedEntryId(null)}
+                onDragOver={(event) => {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                }}
+                onDrop={(event) => {
+                  event.preventDefault();
+                  const sourceId =
+                    Number(event.dataTransfer.getData("text/plain")) ||
+                    draggedEntryId;
+                  if (sourceId) void reorderQueue(sourceId, entry.id);
+                }}
+              >
+                <span className="drag-handle" title="Drag to reorder">
+                  ⠿
+                </span>
+                <span>{entry.line_position}</span>
+                <div>
+                  <strong>{entry.student.display_name}</strong>
+                  <small>
+                    ID {entry.student.student_id} ·{" "}
+                    {entry.student.program || "Program not set"}
+                  </small>
+                </div>
+                <span
+                  className={
+                    entry.student.active_audio ? "ready-dot" : "warning-dot"
+                  }
+                />
+                <button
+                  type="button"
+                  className="secondary queue-announce-button"
+                  disabled={!entry.student.active_audio}
+                  onClick={() => void announceFromArrivalLine(entry)}
+                >
+                  Announce
+                </button>
+                <span className="queue-move-buttons">
+                  <button
+                    className="text-button"
+                    disabled={index === 0}
+                    onClick={() => moveQueueEntry(entry.id, -1)}
+                    aria-label={`Move ${entry.student.display_name} earlier`}
+                  >
+                    ↑
+                  </button>
+                  <button
+                    className="text-button"
+                    disabled={index === activeQueue.length - 1}
+                    onClick={() => moveQueueEntry(entry.id, 1)}
+                    aria-label={`Move ${entry.student.display_name} later`}
+                  >
+                    ↓
+                  </button>
+                </span>
+                <button
+                  className="text-button"
+                  onClick={() => undoCheckIn(entry)}
+                >
+                  Skip
+                </button>
+              </div>
+            ))}
+            {!activeQueue.length && (
+              <p className="empty">
+                Students checked in at the arrival station will appear here.
+              </p>
+            )}
+          </div>
+          <div className="all-status">
+            <strong>Processional progress</strong>
+            <div className="progress">
+              <span
+                style={{
+                  width: `${ceremony?.entries.length ? (ceremony.entries.filter((e) => e.status === "announced").length / ceremony.entries.length) * 100 : 0}%`,
+                }}
+              />
+            </div>
+            <small>
+              {ceremony?.entries.filter((e) => e.status === "announced")
+                .length ?? 0}{" "}
+              of {ceremony?.entries.length ?? 0}{" "}
+              <button
+                type="button"
+                className="text-button announced-progress-link"
+                onClick={() => setShowAnnounced(true)}
+              >
+                announced
+              </button>
+            </small>
+          </div>
+        </section>
+      </div>
+      {showAnnounced && (
+        <div
+          className="modal-backdrop"
+          onMouseDown={(event) =>
+            event.target === event.currentTarget && setShowAnnounced(false)
+          }
+        >
+          <section
+            className="modal small-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="announced-students-title"
+          >
+            <div className="modal-heading">
+              <div>
+                <p className="eyebrow">PROCESSIONAL HISTORY</p>
+                <h2 id="announced-students-title">Announced students</h2>
+              </div>
+              <button
+                type="button"
+                className="close"
+                aria-label="Close announced students"
+                onClick={() => setShowAnnounced(false)}
+              >
+                ×
+              </button>
+            </div>
+            <div className="form-grid single">
+              {announcedStudents.map((entry) => (
+                <div
+                  className="stage-roster-row announced-student-row"
+                  style={{ gridTemplateColumns: "minmax(0, 1fr) auto" }}
+                  key={entry.id}
+                >
+                  <div>
+                    <strong>{entry.student.display_name}</strong>
+                    <small>
+                      Student ID {entry.student.student_id}
+                      {entry.student.program
+                        ? ` · ${entry.student.program}`
+                        : ""}
+                    </small>
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary"
+                    onClick={() => void returnToLine(entry)}
+                  >
+                    Return to arrival line
+                  </button>
+                </div>
+              ))}
+              {!announcedStudents.length && (
+                <p className="empty">No students have been announced yet.</p>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+    </>
+  );
 }
 
-export default App
+export default App;
