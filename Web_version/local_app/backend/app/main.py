@@ -557,7 +557,7 @@ def entry_action(entry_id: int, payload: EntryAction, db: Session = Depends(get_
     )
     if not entry:
         raise HTTPException(404, "Queue entry not found")
-    allowed = {"queue", "announce", "replay", "skip", "reset"}
+    allowed = {"queue", "announce", "replay", "skip", "reset", "return_to_line"}
     if payload.action not in allowed:
         raise HTTPException(400, f"Action must be one of: {', '.join(sorted(allowed))}")
     if payload.action == "queue":
@@ -576,10 +576,22 @@ def entry_action(entry_id: int, payload: EntryAction, db: Session = Depends(get_
         entry.play_count += 1
     elif payload.action == "skip":
         entry.status = "skipped"
-    else:
+    elif payload.action == "reset":
         entry.status = "expected"
         entry.line_position = None
         entry.checked_in_at = None
+        entry.announced_at = None
+        entry.play_count = 0
+    else:
+        waiting_entries = db.scalars(select(CeremonyEntry).where(
+            CeremonyEntry.ceremony_id == entry.ceremony_id,
+            CeremonyEntry.status.in_(["checked_in", "queued"]),
+        )).all()
+        for waiting_entry in waiting_entries:
+            waiting_entry.line_position = (waiting_entry.line_position or 0) + 1
+        entry.status = "checked_in"
+        entry.line_position = 1
+        entry.checked_in_at = utcnow()
         entry.announced_at = None
         entry.play_count = 0
     audit(

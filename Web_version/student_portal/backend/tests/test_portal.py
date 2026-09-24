@@ -50,12 +50,16 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         assert progress.status_code == 200
         assert progress.json()[0]["student_id"] == "S-901"
         token = imported.json()["invites"][0]["token"]
-        headers = {"Authorization": f"Bearer {token}"}
-        assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
         stats = client.get("/api/staff/ceremonies/1/stats", headers={"X-Portal-Staff-Token": "dev-staff-token"})
         assert stats.status_code == 200
         assert stats.json()["students"] == 1
         assert stats.json()["logged_in"] == 0
+        credential_login = client.post("/api/student/login", json={"display_name": "Portal Student", "student_id": "S-901"})
+        assert credential_login.status_code == 200
+        assert credential_login.json()["token"] == token
+        assert client.post("/api/student/login", json={"display_name": "Wrong Name", "student_id": "S-901"}).status_code == 401
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
         login = client.post("/api/student/login", headers=headers)
         assert login.status_code == 200
         assert client.get("/api/staff/ceremonies/1/stats", headers={"X-Portal-Staff-Token": "dev-staff-token"}).json()["logged_in"] == 1
@@ -90,7 +94,7 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         )
         assert submission.status_code == 403
         enabled = client.patch(
-            "/api/staff/settings?student_recording_enabled=true",
+            f"/api/staff/settings?ceremony_id={ceremony_id}&student_recording_enabled=true",
             headers={"X-Portal-Staff-Token": "dev-staff-token"},
         )
         assert enabled.status_code == 200
@@ -125,6 +129,10 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         _, profiles, contents = read_package(exported.content)
         assert profiles["S-901"]["display_name"] == "Portal Student"
         assert profiles["S-901"]["audio"]["path"] in contents
+        deleted = client.delete(f"/api/staff/ceremonies/{ceremony_id}", headers=staff_headers)
+        assert deleted.status_code == 200
+        assert client.get("/api/staff/ceremonies", headers=staff_headers).json() == []
+        assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
 
 
 def test_reimport_preserves_selected_portal_audio_and_marks_changes(tmp_path, monkeypatch):

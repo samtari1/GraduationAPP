@@ -9,7 +9,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import Depends, FastAPI, File, Header, HTTPException, UploadFile
+from fastapi import Body, Depends, FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, select, text
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 from .database import AUDIO_DIR, Base, SessionLocal, engine, get_db
 from .models import PortalAudioCandidate, PortalCeremony, PortalCeremonyStudent, PortalSetting, PortalStudent, PronunciationSubmission, StaffUser, utcnow
 from .package_io import build_package, read_package
-from .schemas import ReviewRequest, SpeechRequest, StaffLoginRequest, StaffPasswordChangeRequest, StudentProfileUpdate, TTSRequest
+from .schemas import ReviewRequest, SpeechRequest, StaffLoginRequest, StaffPasswordChangeRequest, StudentLoginRequest, StudentProfileUpdate, TTSRequest
 from . import google_speech
 
 
@@ -86,6 +86,20 @@ def session_staff(x_portal_staff_token: Optional[str], db: Session) -> StaffUser
 def recording_enabled(db: Session) -> bool:
     setting = db.get(PortalSetting, RECORDING_SETTING)
     return bool(setting and setting.value == "true")
+
+
+def ceremony_recording_key(ceremony_id: int) -> str:
+    return f"{RECORDING_SETTING}:{ceremony_id}"
+
+
+def recording_enabled_for_ceremony(db: Session, ceremony_id: int) -> bool:
+    setting = db.get(PortalSetting, ceremony_recording_key(ceremony_id))
+    return bool(setting and setting.value == "true")
+
+
+def recording_enabled_for_student(db: Session, student_id: int) -> bool:
+    ceremony_ids = select(PortalCeremonyStudent.ceremony_id).where(PortalCeremonyStudent.student_id == student_id)
+    return any(recording_enabled_for_ceremony(db, ceremony_id) for ceremony_id in db.scalars(ceremony_ids).all())
 
 
 def ensure_settings(db: Session) -> None:
@@ -210,11 +224,22 @@ async def import_roster(
 
 
 @app.post("/api/student/login")
-def student_login(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
-    student = current_student(authorization, db)
+def student_login(
+    payload: Optional[StudentLoginRequest] = Body(default=None),
+    authorization: Optional[str] = Header(default=None),
+    db: Session = Depends(get_db),
+):
+    if authorization:
+        student = current_student(authorization, db)
+    elif payload:
+        student = db.scalar(select(PortalStudent).where(PortalStudent.student_id == payload.student_id.strip()))
+        if not student or student.display_name.strip().casefold() != payload.display_name.strip().casefold():
+            raise HTTPException(401, "Invalid student name or ID")
+    else:
+        raise HTTPException(401, "Provide an invitation token or student name and ID")
     student.last_login_at = utcnow()
     db.commit()
-    return {"student_id": student.student_id, "display_name": student.display_name}
+    return {"student_id": student.student_id, "display_name": student.display_name, "token": student.invitation_token}
 
 
 @app.get("/api/student/me")
@@ -237,7 +262,7 @@ def student_profile(authorization: Optional[str] = Header(default=None), db: Ses
         "current_audio_url": f"/media/{student.current_audio_filename}" if student.current_audio_filename else None,
         "submissions": [{"id": item.id, "kind": item.kind, "status": item.status, "note": item.review_note} for item in submissions],
         "candidates": [candidate_out(item) for item in db.scalars(select(PortalAudioCandidate).where(PortalAudioCandidate.student_id == student.id).order_by(PortalAudioCandidate.id.desc())).all()],
-        "recording_enabled": recording_enabled(db),
+        "recording_enabled": recording_enabled_for_student(db, student.id),
     }
 
 
@@ -333,7 +358,7 @@ async def submit_audio(
     db: Session = Depends(get_db),
 ):
     student = current_student(authorization, db)
-    if not recording_enabled(db):
+    if not recording_enabled_for_student(db, student.id):
         raise HTTPException(403, "Student recording uploads are currently disabled by staff")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in ALLOWED_AUDIO:
@@ -382,25 +407,39 @@ def list_ceremonies(_: None = Depends(require_staff), db: Session = Depends(get_
              "student_count": db.query(PortalCeremonyStudent).filter(PortalCeremonyStudent.ceremony_id == item.id).count()} for item in ceremonies]
 
 
+@app.delete("/api/staff/ceremonies/{ceremony_id}")
+def delete_ceremony(ceremony_id: int, _: None = Depends(require_staff), db: Session = Depends(get_db)):
+    ceremony = db.get(PortalCeremony, ceremony_id)
+    if not ceremony:
+        raise HTTPException(404, "Ceremony not found")
+    db.delete(ceremony)
+    db.commit()
+    return {"deleted": ceremony_id}
+
+
 @app.get("/api/staff/settings")
-def staff_settings(_: None = Depends(require_staff), db: Session = Depends(get_db)):
-    ensure_settings(db)
-    return {"student_recording_enabled": recording_enabled(db)}
+def staff_settings(ceremony_id: int, _: None = Depends(require_staff), db: Session = Depends(get_db)):
+    if not db.get(PortalCeremony, ceremony_id):
+        raise HTTPException(404, "Ceremony not found")
+    return {"recording_enabled": recording_enabled_for_ceremony(db, ceremony_id)}
 
 
 @app.patch("/api/staff/settings")
 def update_staff_settings(
     student_recording_enabled: bool,
+    ceremony_id: int,
     _: None = Depends(require_staff),
     db: Session = Depends(get_db),
 ):
-    setting = db.get(PortalSetting, RECORDING_SETTING)
+    if not db.get(PortalCeremony, ceremony_id):
+        raise HTTPException(404, "Ceremony not found")
+    setting = db.get(PortalSetting, ceremony_recording_key(ceremony_id))
     if not setting:
-        setting = PortalSetting(key=RECORDING_SETTING)
+        setting = PortalSetting(key=ceremony_recording_key(ceremony_id))
         db.add(setting)
     setting.value = "true" if student_recording_enabled else "false"
     db.commit()
-    return {"student_recording_enabled": student_recording_enabled}
+    return {"recording_enabled": student_recording_enabled}
 
 
 @app.get("/api/staff/students/progress")

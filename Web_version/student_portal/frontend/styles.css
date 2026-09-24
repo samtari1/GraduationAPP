@@ -1,5 +1,9 @@
 .read-only-value { display: block; min-height: 38px; margin-top: 5px; padding: 10px 11px; border: 1px solid #e1ddd3; border-radius: 6px; background: #f7f5ef; color: #4e5c57; font-weight: 400; letter-spacing: 0; }
 :root { color: #173f3a; background: #f3efe5; font-family: Georgia, serif; --ink: #173f3a; --muted: #53615b; --line: #c8d0c7; --gold: #b1842b; --surface: #fffdf8; --radius: 12px; }
+@media (max-width: 700px) { .source-options { grid-template-columns: 1fr; } }
+@media (max-width: 700px) { .ceremony-picker { align-items: stretch; flex-direction: column; gap: 8px; } }
+@media (max-width: 700px) { .ceremony-upload-control { align-items: flex-start; flex-direction: column; gap: 8px; } .ceremony-upload-control #setting-message { white-space: normal; } }
+@media (max-width: 700px) { .ceremony-actions { grid-template-columns: 1fr; } }
 * { box-sizing: border-box; }
 body { margin: 0; min-height: 100vh; background: radial-gradient(circle at top right, #d8e5db, transparent 38%), #f3efe5; }
 main { width: min(1040px, calc(100% - 56px)); margin: 0 auto; padding: 48px 0 72px; }
@@ -27,7 +31,17 @@ main { width: min(1040px, calc(100% - 56px)); margin: 0 auto; padding: 48px 0 72
 .invite-output { overflow-x: auto; padding: 12px; border-radius: 8px; background: #eef2eb; color: var(--ink); white-space: pre-wrap; }
 .toggle-row { display: flex; align-items: center; gap: 10px; font-weight: 700; }
 .toggle-row input { width: 18px; min-height: 18px; }
-.ceremony-picker { max-width: 520px; margin: 18px 0; }
+.ceremony-picker { display: flex; align-items: end; gap: 16px; max-width: none; margin: 18px 0; }
+.ceremony-picker select { flex: 1; }
+.ceremony-picker button { margin-top: 0; white-space: nowrap; }
+.ceremony-upload-control { display: flex; align-items: center; gap: 16px; flex: 0 0 auto; }
+.ceremony-upload-control .toggle-row { white-space: nowrap; }
+.ceremony-upload-control #setting-message { max-width: 210px; margin: 0; white-space: nowrap; }
+.ceremony-actions { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; margin-top: 26px; padding-top: 24px; border-top: 1px solid var(--line); }
+.ceremony-action { min-width: 0; }
+.ceremony-action h2 { margin-top: 0; }
+.ceremony-action button { margin-top: 10px; }
+.ceremony-action p { color: var(--muted); line-height: 1.5; }
 .student-progress { margin-top: 14px; padding: 18px; border: 1px solid var(--line); border-radius: 10px; background: #fff; }
 .student-progress-header { display: flex; align-items: center; justify-content: space-between; gap: 14px; }
 .student-progress-header h3 { margin: 0 0 4px; }
@@ -61,6 +75,14 @@ textarea { width: 100%; min-height: 76px; padding: 11px 12px; border: 1px solid 
 select { min-height: 45px; padding: 11px 12px; border: 1px solid var(--line); border-radius: 9px; background: white; color: var(--ink); }
 hr { margin: 24px 0; border: 0; border-top: 1px solid #d8d3c7; }
 .presets { display: flex; flex-wrap: wrap; gap: 8px; }
+.source-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-top: 7px; }
+.source-options label { display: flex; align-items: flex-start; gap: 6px; min-width: 0; border: 1px solid #d9d5ca; border-radius: 6px; padding: 9px; background: white; color: #596562; font-size: 11px; cursor: pointer; }
+.source-options label span { min-width: 0; }
+.source-options label strong, .source-options label small { display: block; overflow-wrap: anywhere; }
+.source-options label small { margin-top: 4px; color: #78817e; font-weight: 400; line-height: 1.3; }
+.source-options label.selected { border-color: #438278; background: #eaf3ef; color: #34745a; font-weight: 700; }
+.source-options label.disabled { opacity: .45; cursor: not-allowed; }
+.source-options input { display: block; width: auto; flex: none; padding: 0; margin: 3px 0 0; accent-color: #438278; }
 .presets button { margin-top: 0; background: #e6eadf; color: #173f3a; }
 .candidate { display: grid; gap: 10px; margin-top: 12px; padding: 14px 16px; border: 1px solid #d8d3c7; border-radius: 10px; background: #fff; }
 .candidate audio { width: 100%; height: 38px; border-radius: 8px; }
