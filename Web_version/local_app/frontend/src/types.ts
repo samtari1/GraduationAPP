@@ -34,6 +34,7 @@ export type Ceremony = {
   location: string
   status: string
   student_count: number
+  pronunciation_audio_upload_enabled: boolean
 }
 
 export type Entry = {

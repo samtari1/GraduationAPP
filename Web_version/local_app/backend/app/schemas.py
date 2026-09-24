@@ -71,12 +71,14 @@ class CeremonyCreate(BaseModel):
     name: str = Field(min_length=1, max_length=255)
     event_date: str
     location: str = ""
+    pronunciation_audio_upload_enabled: bool = True
 
 
 class CeremonyUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=1, max_length=255)
     event_date: Optional[str] = None
     location: Optional[str] = None
+    pronunciation_audio_upload_enabled: Optional[bool] = None
 
 
 class CeremonyOut(BaseModel):
@@ -88,6 +90,7 @@ class CeremonyOut(BaseModel):
     status: str
     created_at: datetime
     student_count: int = 0
+    pronunciation_audio_upload_enabled: bool = True
 
 
 class EntryStudent(BaseModel):

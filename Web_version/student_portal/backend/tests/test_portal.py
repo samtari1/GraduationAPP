@@ -52,6 +52,13 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         token = imported.json()["invites"][0]["token"]
         headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
+        stats = client.get("/api/staff/ceremonies/1/stats", headers={"X-Portal-Staff-Token": "dev-staff-token"})
+        assert stats.status_code == 200
+        assert stats.json()["students"] == 1
+        assert stats.json()["logged_in"] == 0
+        login = client.post("/api/student/login", headers=headers)
+        assert login.status_code == 200
+        assert client.get("/api/staff/ceremonies/1/stats", headers={"X-Portal-Staff-Token": "dev-staff-token"}).json()["logged_in"] == 1
         regenerated = client.post("/api/staff/students/S-901/invitation-token", headers={"X-Portal-Staff-Token": "dev-staff-token"})
         assert regenerated.status_code == 200
         assert regenerated.json()["token"] == token

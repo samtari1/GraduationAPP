@@ -64,6 +64,7 @@ class PortalStudent(Base):
     announcement_text: Mapped[str] = mapped_column(String(500), default="")
     invitation_token_hash: Mapped[str] = mapped_column(String(64), index=True)
     invitation_token: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
     current_audio_filename: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     baseline_profile_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     baseline_audio_sha256: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)

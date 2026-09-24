@@ -28,7 +28,7 @@ PROFILE_FIELDS = (
     "program", "announcement_text",
 )
 portal_inspector = inspect(engine)
-for column, definition in (("invitation_token", "VARCHAR(255)"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)")):
+for column, definition in (("invitation_token", "VARCHAR(255)"), ("last_login_at", "DATETIME"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)")):
     if portal_inspector.has_table("portal_students") and column not in {item["name"] for item in portal_inspector.get_columns("portal_students")}:
         with engine.begin() as connection:
             connection.execute(text(f"ALTER TABLE portal_students ADD COLUMN {column} {definition}"))
@@ -212,6 +212,8 @@ async def import_roster(
 @app.post("/api/student/login")
 def student_login(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
     student = current_student(authorization, db)
+    student.last_login_at = utcnow()
+    db.commit()
     return {"student_id": student.student_id, "display_name": student.display_name}
 
 
@@ -422,6 +424,36 @@ def staff_student_progress(ceremony_id: Optional[int] = None, _: None = Depends(
             "candidates": [{"id": item.id, "source": item.source, "voice": item.voice, "language_code": item.language_code, "approved": item.approved, "url": f"/media/{item.filename}"} for item in candidates],
         })
     return result
+
+
+@app.get("/api/staff/ceremonies/{ceremony_id}/stats")
+def staff_ceremony_stats(ceremony_id: int, _: None = Depends(require_staff), db: Session = Depends(get_db)):
+    students = db.scalars(
+        select(PortalStudent)
+        .join(PortalCeremonyStudent, PortalCeremonyStudent.student_id == PortalStudent.id)
+        .where(PortalCeremonyStudent.ceremony_id == ceremony_id)
+    ).all()
+    stats = {"students": len(students), "logged_in": 0, "profile_edited": 0, "native_names_added": 0,
+             "phonetic_guides_added": 0, "audio_generated": 0, "audio_selected": 0,
+             "recordings_submitted": 0, "recordings_approved": 0}
+    for student in students:
+        if student.last_login_at:
+            stats["logged_in"] += 1
+        baseline = json.loads(student.baseline_profile_json) if student.baseline_profile_json else {}
+        changed_fields = [field for field in PROFILE_FIELDS if str(getattr(student, field) or "") != str(baseline.get(field) or "")]
+        if changed_fields:
+            stats["profile_edited"] += 1
+        if "native_name" in changed_fields:
+            stats["native_names_added"] += 1
+        if "phonetic_spelling" in changed_fields:
+            stats["phonetic_guides_added"] += 1
+        candidates = db.scalars(select(PortalAudioCandidate).where(PortalAudioCandidate.student_id == student.id)).all()
+        stats["audio_generated"] += len(candidates)
+        stats["audio_selected"] += sum(1 for candidate in candidates if candidate.approved)
+        submissions = db.scalars(select(PronunciationSubmission).where(PronunciationSubmission.student_id == student.id)).all()
+        stats["recordings_submitted"] += len(submissions)
+        stats["recordings_approved"] += sum(1 for submission in submissions if submission.status == "approved")
+    return stats
 
 
 @app.post("/api/staff/students/{student_id}/invitation-token")

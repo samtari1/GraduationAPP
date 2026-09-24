@@ -8,6 +8,7 @@ import shutil
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Optional
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -52,6 +53,9 @@ if "portal_updated_fields_json" not in {column["name"] for column in inspect(eng
 if "language_code" not in {column["name"] for column in inspect(engine).get_columns("audio_assets")}:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE audio_assets ADD COLUMN language_code VARCHAR(35)"))
+if "pronunciation_audio_upload_enabled" not in {column["name"] for column in inspect(engine).get_columns("ceremonies")}:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE ceremonies ADD COLUMN pronunciation_audio_upload_enabled BOOLEAN DEFAULT 1"))
 
 app = FastAPI(title="GradVoice", version="0.1.0")
 app.add_middleware(
@@ -220,11 +224,19 @@ async def upload_audio(
     file: UploadFile = File(...),
     source: str = Form("upload"),
     approve: bool = Form(False),
+    ceremony_id: Optional[int] = Form(None),
     db: Session = Depends(get_db),
 ):
     student = db.get(Student, student_pk)
     if not student:
         raise HTTPException(404, "Student not found")
+    ceremonies = db.scalars(select(Ceremony).join(CeremonyEntry, CeremonyEntry.ceremony_id == Ceremony.id).where(CeremonyEntry.student_id == student.id)).all()
+    if ceremony_id is not None:
+        ceremonies = [ceremony for ceremony in ceremonies if ceremony.id == ceremony_id]
+        if not ceremonies:
+            raise HTTPException(404, "Student is not assigned to this ceremony")
+    if any(not ceremony.pronunciation_audio_upload_enabled for ceremony in ceremonies):
+        raise HTTPException(403, "Pronunciation audio uploads are disabled for this ceremony")
     suffix = Path(file.filename or "").suffix.lower()
     if suffix not in {".mp3", ".wav", ".m4a", ".ogg", ".webm"}:
         raise HTTPException(400, "Supported formats: MP3, WAV, M4A, OGG, and WebM")

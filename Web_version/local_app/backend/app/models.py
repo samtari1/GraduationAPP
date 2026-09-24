@@ -65,6 +65,7 @@ class Ceremony(Base):
     event_date: Mapped[str] = mapped_column(String(40))
     location: Mapped[str] = mapped_column(String(255), default="")
     status: Mapped[str] = mapped_column(String(30), default="draft")
+    pronunciation_audio_upload_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow)
 
     entries: Mapped[list["CeremonyEntry"]] = relationship(

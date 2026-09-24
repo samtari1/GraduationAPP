@@ -8,4 +8,4 @@ if [[ ! -x "$PORTAL_DIR/.venv/bin/python" ]]; then
 fi
 cd "$PORTAL_DIR"
 exec "$PORTAL_DIR/.venv/bin/python" -m uvicorn backend.app.main:app \
-  --host "${PORTAL_HOST:-127.0.0.1}" --port "${PORTAL_PORT:-8022}"
+  --host "${PORTAL_HOST:-0.0.0.0}" --port "${PORTAL_PORT:-8022}"

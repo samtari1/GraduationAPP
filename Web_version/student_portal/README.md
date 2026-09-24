@@ -22,6 +22,14 @@ The development token flow is not production authentication. Before deployment, 
 
 Open http://127.0.0.1:8022 for student access, or http://127.0.0.1:8022/staff/login for staff access. The first startup creates the default database account `admin` / `admin`. Change that password from the staff dashboard immediately. The legacy `PORTAL_STAFF_TOKEN` remains available for API scripts.
 
+The server listens on all interfaces by default so it can be reached from another machine or cloud load balancer. Configure the listener with environment variables when needed:
+
+```bash
+PORTAL_HOST=0.0.0.0 PORTAL_PORT=8022 ./start.sh
+```
+
+For a cloud deployment, expose the portal through HTTPS on the public domain, proxy the public HTTPS traffic to `127.0.0.1:8022` (or the internal `PORTAL_PORT` you choose), and allow only the proxy/security group to reach the application port. Do not expose the development database or the internal application port publicly when a reverse proxy is available. The frontend uses same-origin `/api`, `/assets`, and `/media` paths, so no local-app port or CORS configuration is required.
+
 ## Package workflow
 
 1. Export a roster ZIP from the local ceremony app.
