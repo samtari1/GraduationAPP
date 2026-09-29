@@ -39,3 +39,5 @@ For a cloud deployment, expose the portal through HTTPS on the public domain, pr
 5. Staff sign in at `/staff/login`, review submissions, and approve the desired audio.
 6. Staff select the ceremony in the dashboard and click **Download approved package**.
 7. On the local app, preview and import the downloaded ZIP through the ceremony portal-package controls.
+
+The student QR code is the local app's random `qr_token`, not the student ID or invitation token. Re-export and re-import the local roster package whenever QR cards have already been printed; the portal will report a synchronization error instead of displaying a QR code that cannot match those cards.

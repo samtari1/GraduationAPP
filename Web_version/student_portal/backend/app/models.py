@@ -56,6 +56,7 @@ class PortalStudent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     student_id: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    qr_token: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, index=True)
     display_name: Mapped[str] = mapped_column(String(255))
     native_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     language: Mapped[Optional[str]] = mapped_column(String(80), nullable=True)

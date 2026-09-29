@@ -4,8 +4,10 @@ import hashlib
 import hmac
 import json
 import os
+import qrcode
 import secrets
 import uuid
+from io import BytesIO
 from pathlib import Path
 from typing import Optional
 
@@ -20,6 +22,7 @@ from .models import PortalAudioCandidate, PortalCeremony, PortalCeremonyStudent,
 from .package_io import build_package, read_package
 from .schemas import ReviewRequest, SpeechRequest, StaffLoginRequest, StaffPasswordChangeRequest, StudentLoginRequest, StudentProfileUpdate, TTSRequest
 from . import google_speech
+from qrcode.image.svg import SvgImage
 
 
 Base.metadata.create_all(bind=engine)
@@ -28,7 +31,7 @@ PROFILE_FIELDS = (
     "program", "announcement_text",
 )
 portal_inspector = inspect(engine)
-for column, definition in (("invitation_token", "VARCHAR(255)"), ("last_login_at", "DATETIME"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)")):
+for column, definition in (("qr_token", "VARCHAR(64)"), ("invitation_token", "VARCHAR(255)"), ("last_login_at", "DATETIME"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)")):
     if portal_inspector.has_table("portal_students") and column not in {item["name"] for item in portal_inspector.get_columns("portal_students")}:
         with engine.begin() as connection:
             connection.execute(text(f"ALTER TABLE portal_students ADD COLUMN {column} {definition}"))
@@ -180,10 +183,13 @@ async def import_roster(
     for student_id, profile in profiles.items():
         student = db.scalar(select(PortalStudent).where(PortalStudent.student_id == student_id))
         invitation = student.invitation_token if student and student.invitation_token else secrets.token_urlsafe(32)
+        qr_token = profile.get("qr_token") if profile.get("qr_token") else None
         if not student:
-            student = PortalStudent(student_id=student_id, invitation_token=invitation, invitation_token_hash=token_hash(invitation))
+            student = PortalStudent(student_id=student_id, qr_token=qr_token, invitation_token=invitation, invitation_token_hash=token_hash(invitation))
             db.add(student)
         else:
+            if qr_token:
+                student.qr_token = qr_token
             if not student.invitation_token:
                 student.invitation_token = invitation
                 student.invitation_token_hash = token_hash(invitation)
@@ -264,6 +270,19 @@ def student_profile(authorization: Optional[str] = Header(default=None), db: Ses
         "candidates": [candidate_out(item) for item in db.scalars(select(PortalAudioCandidate).where(PortalAudioCandidate.student_id == student.id).order_by(PortalAudioCandidate.id.desc())).all()],
         "recording_enabled": recording_enabled_for_student(db, student.id),
     }
+
+
+@app.get("/api/student/me/qr")
+def student_qr_code(authorization: Optional[str] = Header(default=None), db: Session = Depends(get_db)):
+    student = current_student(authorization, db)
+    if not student.qr_token:
+        raise HTTPException(409, "QR code is not synchronized. Ask staff to re-export the local roster package and import it here.")
+    qr = qrcode.QRCode(box_size=8, border=4)
+    qr.add_data(student.qr_token)
+    qr.make(fit=True)
+    output = BytesIO()
+    qr.make_image(image_factory=SvgImage, fill_color="#173f3a", back_color="white").save(output)
+    return Response(content=output.getvalue(), media_type="image/svg+xml", headers={"Cache-Control": "no-store"})
 
 
 def candidate_out(candidate: PortalAudioCandidate):
@@ -556,7 +575,7 @@ def export_portal_package(ceremony_id: Optional[int] = None, _: None = Depends(r
         else:
             audio_metadata = {}
         package_students.append({
-            "student_id": student.student_id, "display_name": student.display_name,
+            "student_id": student.student_id, "qr_token": student.qr_token, "display_name": student.display_name,
             "native_name": student.native_name, "language": student.language,
             "phonetic_spelling": student.phonetic_spelling, "program": student.program,
             "announcement_text": student.announcement_text,

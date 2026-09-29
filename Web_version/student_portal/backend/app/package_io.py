@@ -27,7 +27,7 @@ def build_package(students: list[dict], audio_dir: Path, ceremony: Optional[dict
     for student in students:
         student_id = student["student_id"]
         profile = {key: student.get(key) for key in (
-            "student_id", "display_name", "native_name", "language", "phonetic_spelling",
+            "student_id", "qr_token", "display_name", "native_name", "language", "phonetic_spelling",
             "program", "announcement_text",
         )}
         baseline = student.get("baseline_profile") or {key: profile.get(key) for key in PROFILE_FIELDS}

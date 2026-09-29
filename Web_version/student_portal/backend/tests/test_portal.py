@@ -6,8 +6,8 @@ import zipfile
 from fastapi.testclient import TestClient
 
 
-def make_package():
-    profile = {"student_id": "S-901", "display_name": "Portal Student", "announcement_text": "Portal Student"}
+def make_package(qr_token="local-qr-token-901"):
+    profile = {"student_id": "S-901", "qr_token": qr_token, "display_name": "Portal Student", "announcement_text": "Portal Student"}
     profile_bytes = json.dumps(profile).encode()
     manifest = {
         "format": "gradvoice-portal-package",
@@ -39,6 +39,9 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
             files={"file": ("roster.zip", make_package(), "application/zip")},
         )
         assert imported.status_code == 200
+        from backend.app.models import PortalStudent
+        with main.SessionLocal() as db:
+            assert db.query(PortalStudent).filter_by(student_id="S-901").one().qr_token == "local-qr-token-901"
         ceremony_id = imported.json()["ceremony"]["id"]
         ceremonies = client.get("/api/staff/ceremonies", headers={"X-Portal-Staff-Token": "dev-staff-token"})
         assert ceremonies.status_code == 200
@@ -60,6 +63,15 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         assert client.post("/api/student/login", json={"display_name": "Wrong Name", "student_id": "S-901"}).status_code == 401
         headers = {"Authorization": f"Bearer {token}"}
         assert client.get("/api/student/me", headers=headers).json()["student_id"] == "S-901"
+        from backend.app import main as portal_main
+        payloads = []
+        original_add_data = portal_main.qrcode.QRCode.add_data
+        monkeypatch.setattr(portal_main.qrcode.QRCode, "add_data", lambda qr, value, *args, **kwargs: (payloads.append(value), original_add_data(qr, value, *args, **kwargs))[1])
+        qr = client.get("/api/student/me/qr", headers=headers)
+        assert qr.status_code == 200
+        assert qr.headers["content-type"] == "image/svg+xml"
+        assert b"<svg" in qr.content
+        assert payloads == ["local-qr-token-901"]
         login = client.post("/api/student/login", headers=headers)
         assert login.status_code == 200
         assert client.get("/api/staff/ceremonies/1/stats", headers={"X-Portal-Staff-Token": "dev-staff-token"}).json()["logged_in"] == 1
@@ -128,6 +140,7 @@ def test_roster_import_and_student_submission(tmp_path, monkeypatch):
         from backend.app.package_io import read_package
         _, profiles, contents = read_package(exported.content)
         assert profiles["S-901"]["display_name"] == "Portal Student"
+        assert profiles["S-901"]["qr_token"] == "local-qr-token-901"
         assert profiles["S-901"]["audio"]["path"] in contents
         deleted = client.delete(f"/api/staff/ceremonies/{ceremony_id}", headers=staff_headers)
         assert deleted.status_code == 200
