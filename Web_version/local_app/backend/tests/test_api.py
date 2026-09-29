@@ -62,6 +62,9 @@ def test_portal_package_round_trip_preserves_ceremony_state(client):
         assert manifest["version"] == 1
         assert any(item["path"].endswith("/profile.json") for item in manifest["files"])
         assert any(item["path"].endswith(".wav") for item in manifest["files"])
+        profile_name = next(item["profile"] for item in manifest["students"] if item["student_id"] == "S-350")
+        profile = json.loads(archive.read(profile_name))
+        assert profile["qr_token"] == student["qr_token"]
 
     preview = client.post(
         f"/api/ceremonies/{ceremony['id']}/portal-package/preview",

@@ -711,6 +711,8 @@ async def import_portal_package(
             student = existing.get(student_id)
             if not student:
                 continue
+            if profile.get("qr_token"):
+                student.qr_token = profile["qr_token"]
             for key in ("display_name", "native_name", "language", "phonetic_spelling", "program", "announcement_text"):
                 if key in profile:
                     setattr(student, key, profile[key])
