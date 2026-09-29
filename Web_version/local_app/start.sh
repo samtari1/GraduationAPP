@@ -6,13 +6,20 @@ GRADVOICE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 GRADVOICE_HOST="${GRADVOICE_HOST:-127.0.0.1}"
 GRADVOICE_PORT="${GRADVOICE_PORT:-8012}"
 
-if [[ -x "$GRADVOICE_DIR/.venv/bin/python" ]]; then
-  GRADVOICE_PYTHON="$GRADVOICE_DIR/.venv/bin/python"
-else
-  echo "GradVoice could not find a Python virtual environment." >&2
-  echo "Create one at $GRADVOICE_DIR/.venv, then install requirements.txt." >&2
-  exit 1
+if [[ ! -x "$GRADVOICE_DIR/.venv/bin/python" ]]; then
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 was not found. Install Python 3.11 or newer." >&2
+    exit 1
+  fi
+
+  echo "Creating the GradVoice Python virtual environment..."
+  python3 -m venv "$GRADVOICE_DIR/.venv"
 fi
+
+GRADVOICE_PYTHON="$GRADVOICE_DIR/.venv/bin/python"
+
+echo "Installing GradVoice Python packages..."
+"$GRADVOICE_PYTHON" -m pip install -r "$GRADVOICE_DIR/requirements.txt"
 
 if ! "$GRADVOICE_PYTHON" -c 'import fastapi, sqlalchemy, uvicorn' 2>/dev/null; then
   echo "GradVoice backend packages are missing." >&2
@@ -31,9 +38,8 @@ if ! command -v npm >/dev/null 2>&1; then
 fi
 
 if [[ ! -d "$GRADVOICE_DIR/frontend/node_modules" ]]; then
-  echo "Frontend packages are missing." >&2
-  echo "Run: npm --prefix $GRADVOICE_DIR/frontend install" >&2
-  exit 1
+  echo "Installing GradVoice frontend packages..."
+  npm --prefix "$GRADVOICE_DIR/frontend" install
 fi
 
 cleanup_gradvoice_port() {
