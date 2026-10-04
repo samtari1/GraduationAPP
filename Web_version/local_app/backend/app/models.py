@@ -26,6 +26,7 @@ class Student(Base):
     phonetic_spelling: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     program: Mapped[str] = mapped_column(String(255), default="")
     announcement_text: Mapped[str] = mapped_column(String(500), default="")
+    honors_json: Mapped[str] = mapped_column(Text, default="[]")
     pronunciation_status: Mapped[str] = mapped_column(String(30), default="pending")
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     portal_updated_fields_json: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -38,6 +39,16 @@ class Student(Base):
     )
     active_audio: Mapped[Optional["AudioAsset"]] = relationship(foreign_keys=[active_audio_id], post_update=True)
     ceremony_entries: Mapped[list["CeremonyEntry"]] = relationship(back_populates="student")
+
+    @property
+    def honors(self) -> list[str]:
+        import json
+        return json.loads(self.honors_json or "[]")
+
+    @honors.setter
+    def honors(self, values: list[str] | None) -> None:
+        import json
+        self.honors_json = json.dumps(values or [], ensure_ascii=False)
 
 
 class AudioAsset(Base):

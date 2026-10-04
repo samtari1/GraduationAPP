@@ -36,6 +36,7 @@ class StudentBase(BaseModel):
     phonetic_spelling: Optional[str] = None
     program: str = ""
     announcement_text: str = ""
+    honors: list[str] = Field(default_factory=list, max_length=20)
     pronunciation_status: str = "pending"
     notes: Optional[str] = None
 
@@ -52,6 +53,7 @@ class StudentUpdate(BaseModel):
     phonetic_spelling: Optional[str] = None
     program: Optional[str] = None
     announcement_text: Optional[str] = None
+    honors: Optional[list[str]] = Field(default=None, max_length=20)
     pronunciation_status: Optional[str] = None
     notes: Optional[str] = None
 
@@ -59,6 +61,7 @@ class StudentUpdate(BaseModel):
 class StudentOut(StudentBase):
     model_config = ConfigDict(from_attributes=True)
     id: int
+    honors: list[str] = []
     qr_token: str
     active_audio_id: Optional[int] = None
     active_audio: Optional[AudioOut] = None
@@ -102,6 +105,7 @@ class EntryStudent(BaseModel):
     phonetic_spelling: Optional[str]
     program: str
     announcement_text: str
+    honors: list[str] = []
     pronunciation_status: str
     active_audio_id: Optional[int]
     active_audio: Optional[AudioOut] = None

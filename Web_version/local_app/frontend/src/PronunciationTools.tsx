@@ -27,7 +27,8 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
   const [voices, setVoices] = useState<Voice[]>([])
   const [language, setLanguage] = useState('')
   const [voice, setVoice] = useState('')
-  const [text, setText] = useState(student.display_name)
+  const honorsSuffix = student.honors.length ? `, ${student.honors.join(', ')}` : ''
+  const [text, setText] = useState(`${student.announcement_text || student.display_name}${honorsSuffix}`)
   const [textSource, setTextSource] = useState('Display name')
   const [rate, setRate] = useState(1)
   const [busy, setBusy] = useState(false)
@@ -36,6 +37,9 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
   const [selectedAudioId, setSelectedAudioId] = useState<number | null>(student.active_audio_id)
   const autoSelectionAttempted = useRef(false)
   const [message, setMessage] = useState('')
+  useEffect(() => {
+    if (textSource === 'Display name') setText(`${student.announcement_text || student.display_name}${honorsSuffix}`)
+  }, [student.announcement_text, student.display_name, student.honors.join('|'), textSource])
   const generationBlocker = dirty
     ? 'Save the student record before generating audio.'
     : !language
@@ -126,7 +130,7 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
 
   const chooseTextSource = (source: string, value: string) => {
     setTextSource(source)
-    setText(value)
+    setText(`${value}${honorsSuffix}`)
   }
 
   const approve = async (asset: AudioAsset) => {
@@ -157,13 +161,13 @@ export default function PronunciationTools({ student, dirty, onChanged }: {
   }
 
   return <section className="pronunciation-tools">
-    <p><strong>Pronunciation</strong> · Generation sends the selected name below to Google Cloud and may incur charges. Saved MP3s play offline. Credentials stay on the server.</p>
+    <p><strong>Pronunciation</strong> · Generation sends the selected name and honors below to Google Cloud and may incur charges. Saved MP3s play offline. Credentials stay on the server.</p>
     {dirty && <p className="studio-message">Save your record changes before generating or selecting audio.</p>}
     <div className="speech-settings">
       <label>Pronunciation language<select value={language} disabled={busy || !languages.length} onChange={e => { const code = e.target.value; setLanguage(code); setVoices([]); setVoice(''); void loadVoices(code) }}><option value="">{busy ? 'Loading supported languages…' : 'Select a language'}</option>{languages.map(code => <option value={code} key={code}>{languageDisplayName(code)} · {code}</option>)}</select></label>
       <label>Voice<select value={voice} onChange={e => setVoice(e.target.value)}><option value="">Load and select a voice</option>{voices.length > 0 && <option value="__auto__">Automatic · Let Google choose for {languageDisplayName(language)}</option>}{voices.map(item => <option value={item.name} key={item.name}>{item.name} · {item.gender}</option>)}</select></label>
       <label>Speaking rate<input type="number" min="0.25" max="2" step="0.05" value={rate} onChange={e => setRate(Number(e.target.value))} /></label>
-      <fieldset className="wide source-picker"><legend>Text to pronounce</legend><div className="source-options"><label className={textSource === 'Display name' ? 'selected' : ''}><input type="radio" name={`text-source-${student.id}`} value="Display name" checked={textSource === 'Display name'} onChange={() => chooseTextSource('Display name', student.display_name)} /><span><strong>Display name</strong><small>{student.display_name}</small></span></label><label className={!student.native_name ? 'disabled' : textSource === 'Native-language name' ? 'selected' : ''}><input type="radio" name={`text-source-${student.id}`} value="Native-language name" disabled={!student.native_name} checked={textSource === 'Native-language name'} onChange={() => chooseTextSource('Native-language name', student.native_name ?? '')} /><span><strong>Native-language name</strong><small>{student.native_name || 'Not provided'}</small></span></label><label className={!student.phonetic_spelling ? 'disabled' : textSource === 'Phonetic name' ? 'selected' : ''}><input type="radio" name={`text-source-${student.id}`} value="Phonetic name" disabled={!student.phonetic_spelling} checked={textSource === 'Phonetic name'} onChange={() => chooseTextSource('Phonetic name', student.phonetic_spelling ?? '')} /><span><strong>Phonetic name</strong><small>{student.phonetic_spelling || 'Not provided'}</small></span></label></div></fieldset>
+      <fieldset className="wide source-picker"><legend>Text to pronounce</legend><div className="source-options"><label className={textSource === 'Display name' ? 'selected' : ''}><input type="radio" name={`text-source-${student.id}`} value="Display name" checked={textSource === 'Display name'} onChange={() => chooseTextSource('Display name', student.announcement_text || student.display_name)} /><span><strong>Display name</strong><small>{student.announcement_text || student.display_name}{honorsSuffix}</small></span></label><label className={!student.native_name ? 'disabled' : textSource === 'Native-language name' ? 'selected' : ''}><input type="radio" name={`text-source-${student.id}`} value="Native-language name" disabled={!student.native_name} checked={textSource === 'Native-language name'} onChange={() => chooseTextSource('Native-language name', student.native_name ?? '')} /><span><strong>Native-language name</strong><small>{student.native_name || 'Not provided'}{student.native_name ? honorsSuffix : ''}</small></span></label><label className={!student.phonetic_spelling ? 'disabled' : textSource === 'Phonetic name' ? 'selected' : ''}><input type="radio" name={`text-source-${student.id}`} value="Phonetic name" disabled={!student.phonetic_spelling} checked={textSource === 'Phonetic name'} onChange={() => chooseTextSource('Phonetic name', student.phonetic_spelling ?? '')} /><span><strong>Phonetic name</strong><small>{student.phonetic_spelling || 'Not provided'}{student.phonetic_spelling ? honorsSuffix : ''}</small></span></label></div><label className="wide">Edit spoken text<textarea value={text} onChange={event => { setTextSource('Custom text'); setText(event.target.value) }} rows={2} /></label></fieldset>
       <div className="generate-control wide"><button type="button" className="primary" onClick={generate} disabled={busy || !!generationBlocker} title={generationBlocker}>{busy ? 'Working…' : 'Generate name pronunciation audio'}</button>{!busy && generationBlocker && <small>{generationBlocker}</small>}</div>
     </div>
     {message && <p className="studio-message" role="status">{message}</p>}

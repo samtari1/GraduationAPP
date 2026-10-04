@@ -486,6 +486,7 @@ function Students({
       "phonetic_spelling",
       "program",
       "announcement_text",
+      "honors",
     ];
     const escapeCsv = (value: string | null) =>
       `"${(value ?? "").replaceAll('"', '""')}"`;
@@ -497,6 +498,7 @@ function Students({
         student.phonetic_spelling,
         student.program,
         student.announcement_text,
+        student.honors.join(" | "),
       ]
         .map(escapeCsv)
         .join(","),
@@ -566,6 +568,8 @@ function Students({
             Optional: <strong>native_name</strong>, <strong>language</strong>,{" "}
             <strong>phonetic_spelling</strong>, <strong>program</strong>,{" "}
             <strong>announcement_text</strong>.
+            <br />
+            Optional honors: <strong>honors</strong> (separate multiple entries with |).
           </small>
         </div>
         <div className="heading-actions">
@@ -763,6 +767,7 @@ function StudentModal({
     phonetic_spelling: student?.phonetic_spelling ?? "",
     program: student?.program ?? "",
     announcement_text: student?.announcement_text ?? "",
+    honors: student?.honors ?? [],
     pronunciation_status:
       student?.pronunciation_status === "approved"
         ? "approved"
@@ -774,9 +779,9 @@ function StudentModal({
   const dirty =
     !!student &&
     Object.entries(form).some(
-      ([key, value]) => value !== (savedStudent?.[key as keyof Student] ?? ""),
+      ([key, value]) => JSON.stringify(value) !== JSON.stringify(savedStudent?.[key as keyof Student] ?? ""),
     );
-  const update = (key: string, value: string) =>
+  const update = (key: string, value: string | string[]) =>
     setForm((current) => ({ ...current, [key]: value }));
   const portalUpdated = (key: string) =>
     student?.portal_updated_fields.includes(key);
@@ -789,9 +794,10 @@ function StudentModal({
       "phonetic_spelling",
       "program",
       "announcement_text",
+      "honors",
       "pronunciation_status",
     ] as const;
-    if (!profileKeys.some((key) => form[key] !== (savedStudent[key] ?? "")))
+    if (!profileKeys.some((key) => JSON.stringify(form[key]) !== JSON.stringify(savedStudent[key] ?? "")))
       return;
     const timeout = window.setTimeout(async () => {
       try {
@@ -896,6 +902,35 @@ function StudentModal({
               onChange={(e) => update("program", e.target.value)}
             />
           </label>
+          <fieldset className="wide">
+            <legend>Honors and awards</legend>
+            {(["Cum Laude", "Magna Cum Laude", "Summa Cum Laude"] as const).map((honor) => (
+              <label key={honor} className="inline-choice">
+                <input
+                  type="checkbox"
+                  checked={form.honors.includes(honor)}
+                  onChange={(event) => update("honors", event.target.checked
+                    ? [...form.honors, honor]
+                    : form.honors.filter((item) => item !== honor))}
+                />
+                {honor}
+              </label>
+            ))}
+            <label className="wide">
+              Custom honors or awards (one per line)
+              <textarea
+                rows={2}
+                value={form.honors.filter((honor) => !["Cum Laude", "Magna Cum Laude", "Summa Cum Laude"].includes(honor)).join("\n")}
+                onChange={(event) => {
+                  const custom = event.target.value.split("\n").map((item) => item.trim()).filter(Boolean);
+                  const standard = form.honors.filter((honor) => ["Cum Laude", "Magna Cum Laude", "Summa Cum Laude"].includes(honor));
+                  update("honors", [...standard, ...custom]);
+                }}
+                placeholder="e.g. First Prize"
+              />
+            </label>
+            <small>Selected honors are included after the student’s name in generated pronunciation audio.</small>
+          </fieldset>
           <label className="wide">
             Display name
             {portalUpdated("display_name") && (
@@ -2465,6 +2500,9 @@ function StageControl({
                 <p className="native" dir="auto">
                   {current.student.native_name}
                 </p>
+              )}
+              {current.student.honors.length > 0 && (
+                <p className="honors">{current.student.honors.join(" · ")}</p>
               )}
               <p className="program">{current.student.program}</p>
               <p className="program">Student ID {current.student.student_id}</p>

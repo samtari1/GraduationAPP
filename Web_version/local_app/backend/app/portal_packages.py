@@ -19,12 +19,14 @@ def _digest(content: bytes) -> str:
 def _profile(student, audio_path: Path | None, audio_asset) -> tuple[dict, bytes | None, str | None]:
     profile = {
         "student_id": student.student_id,
+        "qr_token": student.qr_token,
         "display_name": student.display_name,
         "native_name": student.native_name,
         "language": student.language,
         "phonetic_spelling": student.phonetic_spelling,
         "program": student.program,
         "announcement_text": student.announcement_text,
+        "honors": student.honors,
         "pronunciation_status": student.pronunciation_status,
     }
     profile["baseline"] = dict(profile)

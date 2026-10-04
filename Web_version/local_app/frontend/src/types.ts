@@ -20,6 +20,7 @@ export type Student = {
   phonetic_spelling: string | null
   program: string
   announcement_text: string
+  honors: string[]
   pronunciation_status: string
   notes: string | null
   active_audio_id: number | null

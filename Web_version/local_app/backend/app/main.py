@@ -50,6 +50,9 @@ if "line_position" not in {column["name"] for column in inspect(engine).get_colu
 if "portal_updated_fields_json" not in {column["name"] for column in inspect(engine).get_columns("students")}:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE students ADD COLUMN portal_updated_fields_json TEXT"))
+if "honors_json" not in {column["name"] for column in inspect(engine).get_columns("students")}:
+    with engine.begin() as connection:
+        connection.execute(text("ALTER TABLE students ADD COLUMN honors_json TEXT NOT NULL DEFAULT '[]'"))
 if "language_code" not in {column["name"] for column in inspect(engine).get_columns("audio_assets")}:
     with engine.begin() as connection:
         connection.execute(text("ALTER TABLE audio_assets ADD COLUMN language_code VARCHAR(35)"))
@@ -82,6 +85,7 @@ def student_query():
 
 def serialize_student(student: Student) -> StudentOut:
     result = StudentOut.model_validate(student)
+    result.honors = json.loads(student.honors_json or "[]")
     result.portal_updated_fields = json.loads(student.portal_updated_fields_json or "[]")
     if result.active_audio:
         result.active_audio.url = f"/media/{result.active_audio.filename}"
@@ -143,8 +147,17 @@ def update_student(student_pk: int, payload: StudentUpdate, db: Session = Depend
     if not student:
         raise HTTPException(404, "Student not found")
     updates = payload.model_dump(exclude_unset=True)
+    honors_changed = "honors" in updates and (updates["honors"] or []) != json.loads(student.honors_json or "[]")
     for key, value in updates.items():
-        setattr(student, key, value)
+        if key == "honors":
+            student.honors_json = json.dumps(value or [], ensure_ascii=False)
+        else:
+            setattr(student, key, value)
+    if honors_changed and student.active_audio_id:
+        # Require a fresh reviewed recording so ceremony audio includes the new honor.
+        student.active_audio = None
+        student.active_audio_id = None
+        student.pronunciation_status = "needs_review"
     audit(db, "student.updated", f"Updated {student.display_name}", "student", student.id)
     try:
         db.commit()
@@ -204,9 +217,16 @@ async def import_students(file: UploadFile = File(...), db: Session = Depends(ge
             "program": (row.get("program") or "").strip(),
             "announcement_text": (row.get("announcement_text") or "").strip() or name,
         }
+        if "honors" in row:
+            values["honors_json"] = json.dumps([item.strip() for item in (row.get("honors") or "").split("|") if item.strip()], ensure_ascii=False)
         if student:
+            honors_changed = "honors_json" in values and values["honors_json"] != (student.honors_json or "[]")
             for key, value in values.items():
                 setattr(student, key, value)
+            if honors_changed and student.active_audio_id:
+                student.active_audio = None
+                student.active_audio_id = None
+                student.pronunciation_status = "needs_review"
             student.pronunciation_status = "needs_review"
             updated += 1
         else:
@@ -438,6 +458,7 @@ def find_scanned_entry(ceremony_id: int, raw_token: str, db: Session):
 
 def serialize_entry(entry: CeremonyEntry):
     result = EntryOut.model_validate(entry)
+    result.student.honors = json.loads(entry.student.honors_json or "[]")
     if result.student.active_audio:
         result.student.active_audio.url = f"/media/{result.student.active_audio.filename}"
     return result
@@ -711,9 +732,17 @@ async def import_portal_package(
             student = existing.get(student_id)
             if not student:
                 continue
+            incoming_honors = profile.get("honors")
+            honors_changed = incoming_honors is not None and incoming_honors != json.loads(student.honors_json or "[]")
             for key in ("display_name", "native_name", "language", "phonetic_spelling", "program", "announcement_text"):
                 if key in profile:
                     setattr(student, key, profile[key])
+            if "honors" in profile:
+                student.honors_json = json.dumps(profile.get("honors") or [], ensure_ascii=False)
+            if honors_changed and student.active_audio_id:
+                student.active_audio = None
+                student.active_audio_id = None
+                student.pronunciation_status = "needs_review"
             portal_changes = list(profile.get("changes", []))
             if (profile.get("audio") or {}).get("changed"):
                 portal_changes.append("audio")
@@ -739,7 +768,7 @@ async def import_portal_package(
                 )
                 db.add(asset)
                 db.flush()
-                if activate_audio and asset.approved:
+                if activate_audio and asset.approved and not honors_changed:
                     student.active_audio_id = asset.id
                     student.pronunciation_status = "approved"
                 else:
@@ -767,8 +796,10 @@ def audio_out(asset):
 
 
 def pronunciation_snapshot(student):
-    return {key: getattr(student, key) for key in
-            ("display_name", "native_name", "language", "phonetic_spelling", "announcement_text")}
+    snapshot = {key: getattr(student, key) for key in
+                ("display_name", "native_name", "language", "phonetic_spelling", "announcement_text")}
+    snapshot["honors"] = json.loads(student.honors_json or "[]")
+    return snapshot
 
 
 @app.get("/api/speech/voices")
