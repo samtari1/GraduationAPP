@@ -149,14 +149,18 @@ const loadCeremonies = async () => {
 }
 
 const renderLogin = () => {
-  app.innerHTML = `<main class="auth-page"><p class="eyebrow">GRADVOICE · STUDENT PORTAL</p><h1>Review your pronunciation.</h1><p class="intro">Sign in with your invitation token, or use your name and student ID.</p><section class="panel auth-panel"><label>Invitation token<input id="token" type="password" autocomplete="off"></label><p class="login-divider">Or sign in with your student details</p><label>Student name<input id="student-name" autocomplete="name"></label><label>Student ID<input id="student-id" autocomplete="username"></label><button id="login">Open my profile</button><p id="message" role="status"></p></section></main>`
+  app.innerHTML = `<main class="auth-page"><p class="eyebrow">GRADVOICE · STUDENT PORTAL</p><h1>Review your pronunciation.</h1><p class="intro">Sign in with your invitation token, or use your name and student ID.</p><form id="student-login-form" class="panel auth-panel"><label>Invitation token<input id="token" type="password" autocomplete="off"></label><p class="login-divider">Or sign in with your student details</p><label>Student name<input id="student-name" autocomplete="name"></label><label>Student ID<input id="student-id" autocomplete="username"></label><button id="login" type="submit">Open my profile</button><p id="message" role="status" aria-live="polite"></p></form></main>`
   const message = document.querySelector('#message')
   if (token) request('/api/student/me').then(() => go('/review')).catch(() => { sessionStorage.removeItem(savedTokenKey); token = '' })
-  document.querySelector('#login').addEventListener('click', async () => {
+  document.querySelector('#student-login-form').addEventListener('submit', async (event) => {
+    event.preventDefault()
     const enteredToken = document.querySelector('#token').value.trim()
     const studentName = document.querySelector('#student-name').value.trim()
     const studentId = document.querySelector('#student-id').value.trim()
     if (!enteredToken && (!studentName || !studentId)) { message.textContent = 'Enter an invitation token or both your student name and ID.'; return }
+    const button = document.querySelector('#login')
+    button.disabled = true
+    message.textContent = 'Signing in…'
     try {
       if (enteredToken) {
         token = enteredToken
@@ -168,8 +172,10 @@ const renderLogin = () => {
         token = result.token
       }
       sessionStorage.setItem(savedTokenKey, token)
+      message.textContent = 'Signed in. Opening your profile…'
       go('/review')
-    } catch (error) { message.textContent = error.message }
+    } catch (error) { message.textContent = error.message || 'Could not sign in. Check your connection and try again.' }
+    finally { button.disabled = false }
   })
 }
 
@@ -188,6 +194,14 @@ const renderProfile = (data) => {
   const profile = document.querySelector('#profile')
   const recordingSection = data.recording_enabled ? `<hr><h3>Student recording</h3><label>Upload a recording<input id="audio" type="file" accept="audio/*"></label><button id="submit">Submit recording for review</button>` : ''
   profile.innerHTML = `<div class="record-heading"><div><p class="eyebrow">YOUR RECORD</p><h2>${data.display_name}</h2><p class="section-intro">Check the college-provided details, then update the optional pronunciation guidance below.</p></div><span class="autosave-badge">Autosaves changes</span></div><section class="record-section"><div class="section-heading"><div><h3>Student details</h3><p>These details are provided by the college. Only the optional name guidance can be edited.</p></div></div><div class="form-grid"><label>Display name<span class="read-only-value">${data.display_name || 'Not provided'}</span></label><label>Program<span class="read-only-value">${data.program || 'Not provided'}</span></label><label>Native name<input id="native-name" value="${data.native_name || ''}" placeholder="Optional"></label><label>Phonetic spelling<input id="phonetic" value="${data.phonetic_spelling || ''}" placeholder="Optional"></label><label class="wide">Announcement text<span class="read-only-value">${data.announcement_text || 'Not provided'}</span></label></div><div class="student-qr"><div><h3>Student QR code</h3><p>Show this code when your student record needs to be identified.</p><small>It does not contain your login token.</small></div><img src="/api/student/me/qr" alt="QR code for ${data.display_name || 'this student'}"></div><p id="profile-message" role="status"></p></section><section class="record-section pronunciation-section"><div class="section-heading"><div><h3>Pronunciation</h3><p>Choose a language and voice, review the text, then generate audio.</p></div><span class="standard-setting">Standard rate · 1.0</span></div><div class="speech-settings"><label>Pronunciation language<select id="speech-language"><option>Loading languages...</option></select></label><label>Voice<select id="speech-voice"><option>Select a language first</option></select></label><label class="wide">Text to pronounce<textarea id="speech-text" rows="2">${data.announcement_text || data.display_name || ''}</textarea></label><div class="wide presets"><button type="button" id="use-ceremony">Display name</button><button type="button" id="use-native">Native name</button><button type="button" id="use-phonetic">Phonetic spelling</button></div></div><button id="generate">Generate pronunciation audio</button><p id="speech-message" role="status"></p></section><section class="record-section candidate-section"><div id="candidates"></div></section>${recordingSection}<section class="record-section submission-section"><h3>Submission history</h3><ul>${data.submissions.map(item => `<li>${item.kind}: ${item.status}${item.note ? ` — ${item.note}` : ''}</li>`).join('') || '<li>No submissions yet.</li>'}</ul></section>`
+  const detailGrid = profile.querySelector('.record-section .form-grid')
+  const honorsLabel = document.createElement('label')
+  const honorsValue = document.createElement('span')
+  honorsLabel.append('Honors and awards')
+  honorsValue.className = 'read-only-value'
+  honorsValue.textContent = (data.honors || []).join(' · ') || 'None'
+  honorsLabel.append(honorsValue)
+  detailGrid?.prepend(honorsLabel)
   const qrImage = profile.querySelector('.student-qr img')
   if (qrImage) {
     qrImage.removeAttribute('src')

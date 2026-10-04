@@ -28,10 +28,10 @@ from qrcode.image.svg import SvgImage
 Base.metadata.create_all(bind=engine)
 PROFILE_FIELDS = (
     "display_name", "native_name", "language", "phonetic_spelling",
-    "program", "announcement_text",
+    "program", "announcement_text", "honors",
 )
 portal_inspector = inspect(engine)
-for column, definition in (("qr_token", "VARCHAR(64)"), ("invitation_token", "VARCHAR(255)"), ("last_login_at", "DATETIME"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)")):
+for column, definition in (("qr_token", "VARCHAR(64)"), ("invitation_token", "VARCHAR(255)"), ("last_login_at", "DATETIME"), ("baseline_profile_json", "TEXT"), ("baseline_audio_sha256", "VARCHAR(64)"), ("honors_json", "TEXT NOT NULL DEFAULT '[]'")):
     if portal_inspector.has_table("portal_students") and column not in {item["name"] for item in portal_inspector.get_columns("portal_students")}:
         with engine.begin() as connection:
             connection.execute(text(f"ALTER TABLE portal_students ADD COLUMN {column} {definition}"))
@@ -196,8 +196,11 @@ async def import_roster(
         incoming_baseline = profile.get("baseline") or {key: profile.get(key) for key in PROFILE_FIELDS}
         stored_baseline = json.loads(student.baseline_profile_json) if student.baseline_profile_json else None
         for key in PROFILE_FIELDS:
-            if key in profile and (not stored_baseline or getattr(student, key) == stored_baseline.get(key)):
-                setattr(student, key, profile[key])
+            if key in profile and (not stored_baseline or (json.loads(student.honors_json or "[]") if key == "honors" else getattr(student, key)) == stored_baseline.get(key)):
+                if key == "honors":
+                    student.honors_json = json.dumps(profile.get(key) or [], ensure_ascii=False)
+                else:
+                    setattr(student, key, profile[key])
         student.baseline_profile_json = json.dumps(incoming_baseline, ensure_ascii=False)
         audio = profile.get("audio") or {}
         audio_path = audio.get("path")
@@ -265,6 +268,7 @@ def student_profile(authorization: Optional[str] = Header(default=None), db: Ses
         "phonetic_spelling": student.phonetic_spelling,
         "program": student.program,
         "announcement_text": student.announcement_text,
+        "honors": json.loads(student.honors_json or "[]"),
         "current_audio_url": f"/media/{student.current_audio_filename}" if student.current_audio_filename else None,
         "submissions": [{"id": item.id, "kind": item.kind, "status": item.status, "note": item.review_note} for item in submissions],
         "candidates": [candidate_out(item) for item in db.scalars(select(PortalAudioCandidate).where(PortalAudioCandidate.student_id == student.id).order_by(PortalAudioCandidate.id.desc())).all()],
@@ -476,7 +480,7 @@ def staff_student_progress(ceremony_id: Optional[int] = None, _: None = Depends(
             "student_id": student.student_id,
             "ceremony": {"id": ceremony.id, "name": ceremony.name, "event_date": ceremony.event_date} if ceremony else None,
             "display_name": student.display_name,
-            "profile": {"display_name": student.display_name, "native_name": student.native_name, "language": student.language, "phonetic_spelling": student.phonetic_spelling, "program": student.program, "announcement_text": student.announcement_text},
+            "profile": {"display_name": student.display_name, "native_name": student.native_name, "language": student.language, "phonetic_spelling": student.phonetic_spelling, "program": student.program, "announcement_text": student.announcement_text, "honors": json.loads(student.honors_json or "[]")},
             "selected_audio_url": f"/media/{student.current_audio_filename}" if student.current_audio_filename else None,
             "submissions": [{"id": item.id, "kind": item.kind, "status": item.status, "original_filename": item.original_filename, "url": f"/media/{item.filename}" if item.filename else None} for item in submissions],
             "candidates": [{"id": item.id, "source": item.source, "voice": item.voice, "language_code": item.language_code, "approved": item.approved, "url": f"/media/{item.filename}"} for item in candidates],
@@ -498,7 +502,7 @@ def staff_ceremony_stats(ceremony_id: int, _: None = Depends(require_staff), db:
         if student.last_login_at:
             stats["logged_in"] += 1
         baseline = json.loads(student.baseline_profile_json) if student.baseline_profile_json else {}
-        changed_fields = [field for field in PROFILE_FIELDS if str(getattr(student, field) or "") != str(baseline.get(field) or "")]
+        changed_fields = [field for field in PROFILE_FIELDS if str(json.loads(student.honors_json or "[]") if field == "honors" else getattr(student, field) or "") != str(baseline.get(field) or "")]
         if changed_fields:
             stats["profile_edited"] += 1
         if "native_name" in changed_fields:
@@ -579,6 +583,7 @@ def export_portal_package(ceremony_id: Optional[int] = None, _: None = Depends(r
             "native_name": student.native_name, "language": student.language,
             "phonetic_spelling": student.phonetic_spelling, "program": student.program,
             "announcement_text": student.announcement_text,
+            "honors": json.loads(student.honors_json or "[]"),
             "current_audio_filename": student.current_audio_filename,
             "baseline_profile": json.loads(student.baseline_profile_json),
             "baseline_audio_sha256": student.baseline_audio_sha256,

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TTSRequest(BaseModel):
@@ -29,6 +29,7 @@ class StaffPasswordChangeRequest(BaseModel):
 
 
 class StudentProfileUpdate(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     native_name: Optional[str] = Field(default=None, max_length=255)
     phonetic_spelling: Optional[str] = Field(default=None, max_length=255)
 

@@ -18,7 +18,7 @@ def _digest(content: bytes) -> str:
 
 PROFILE_FIELDS = (
     "display_name", "native_name", "language", "phonetic_spelling",
-    "program", "announcement_text",
+    "program", "announcement_text", "honors",
 )
 
 def build_package(students: list[dict], audio_dir: Path, ceremony: Optional[dict] = None) -> bytes:
@@ -30,6 +30,7 @@ def build_package(students: list[dict], audio_dir: Path, ceremony: Optional[dict
             "student_id", "qr_token", "display_name", "native_name", "language", "phonetic_spelling",
             "program", "announcement_text",
         )}
+        profile["honors"] = student.get("honors", [])
         baseline = student.get("baseline_profile") or {key: profile.get(key) for key in PROFILE_FIELDS}
         profile["baseline"] = baseline
         profile["changes"] = [key for key in PROFILE_FIELDS if profile.get(key) != baseline.get(key)]

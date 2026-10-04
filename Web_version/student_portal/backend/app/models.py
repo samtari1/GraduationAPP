@@ -63,6 +63,7 @@ class PortalStudent(Base):
     phonetic_spelling: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     program: Mapped[str] = mapped_column(String(255), default="")
     announcement_text: Mapped[str] = mapped_column(String(500), default="")
+    honors_json: Mapped[str] = mapped_column(Text, default="[]")
     invitation_token_hash: Mapped[str] = mapped_column(String(64), index=True)
     invitation_token: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     last_login_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
